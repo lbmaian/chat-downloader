@@ -189,6 +189,7 @@ class ChatReplayDownloader:
             status_forcelist=[413, 429, 500, 502, 503, 504], # also retries on connection/read timeouts
             allowed_methods=False))) # retry on any HTTP method (including GET and POST)
 
+        # TODO: add option to save or update cookies file when finished
         cj = MozillaCookieJar(cookies)
         if cookies is not None:
             # Only attempt to load if the cookie file exists.
@@ -510,6 +511,8 @@ class ChatReplayDownloader:
 
     def __extract_heartbeat_params(self, info):
         heartbeatParams = info.get('heartbeatParams', {})
+        # TODO: if not logged in (no/expired YT cookies) or no access to upcoming private stream,
+        # heartbeatToken and intervalMilliseconds aren't available
         heartbeat_params = {
             'heartbeat_params': {
                 'heartbeatToken': heartbeatParams['heartbeatToken'],
@@ -872,6 +875,8 @@ class ChatReplayDownloader:
 
                 if continuation_title is None:
                     error_message = config.get('no_chat_error', 'Video does not have a chat replay.')
+                    # TODO: option for: a) no retry, b) retry while upcoming (current), c) retry while not ended
+                    # TODO: also if (b) or (c), option to abort after x time after scheduled start time
                     if config['is_upcoming']:
                         if abort_cond_groups:
                             if abort_cond_checker is None:
@@ -1401,7 +1406,7 @@ def main(args):
         print('[Twitch Error]', e, flush=True)
     except (LoadError, CookieError) as e:
         print('[Cookies Error]', e, flush=True)
-    except requests.exceptions.RequestException:
+    except requests.exceptions.RequestException as e:
         print('[HTTP Request Error]', e, flush=True)
     except KeyboardInterrupt: # this should already be caught within get_chat_replay, but keeping this just in case
         print('[Interrupted]', flush=True)
