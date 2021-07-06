@@ -1163,21 +1163,22 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
         parser.add_argument('url', help='YouTube/Twitch video URL')
 
     parser.add_argument('--start_time', '--from', default=None,
-                        help='start time in seconds or hh:mm:ss [no effect on non-replay YouTube videos]\n(default: %(default)s = from the start)')
+                        help='start time in seconds or hh:mm:ss [no effect on non-replay YouTube videos]\n(default: from the start)')
     parser.add_argument('--end_time', '--to', default=None,
-                        help='end time in seconds or hh:mm:ss [no effect on non-replay YouTube videos]\n(default: %(default)s = until the end)')
+                        help='end time in seconds or hh:mm:ss [no effect on non-replay YouTube videos]\n(default: until the end)')
 
     parser.add_argument('--message_type', choices=['messages', 'superchat', 'all'], default='messages',
-                        help='types of messages to include [YouTube only]\n(default: %(default)s)')
+                        help='types of messages to include [YouTube only]\n(default: %(default)r)')
 
     parser.add_argument('--chat_type', choices=['live', 'top'], default='live',
-                        help='which chat to get messages from [YouTube only]\n(default: %(default)s)')
+                        help='which chat to get messages from [YouTube only]\n(default: %(default)r)')
 
     parser.add_argument('--output', '-o', default=None,
-                        help='name of output file\n(default: %(default)s = print to standard output)')
+                        help='name of output file\n(default: no output file)\n'
+                             'Note: logging, which also includes chat messages, may still output to stdout and/or file depending on --log_file)')
 
     parser.add_argument('--cookies', '-c', default=None,
-                        help='name of cookies file\n(default: %(default)s)')
+                        help='name of cookies file\n(default: no cookies used)')
 
     if abort_signals is None:
         abort_cond_type = str # assume this means we don't want to parse the abort conditions themselves
@@ -1217,25 +1218,27 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                              "and any boolean formula can be converted into this OR of ANDs form (a.k.a. disjunctive normal form).")
 
     parser.add_argument('--hide_output', action='store_true',
-                        help='whether to hide stdout and stderr output or not\n(default: %(default)s)')
+                        help="if specified, changes the default of --log_file to ':none:',\n"
+                             "i.e. hide both stdout and stderr unless user specifies --log_file x, where x is not :none:\n"
+                             "(deprecated - instead use: --log_file :none:)")
 
     parser.add_argument('--log_file', action='append',
                         help="file (or console) to log output to, including redirecting stdout and stderr to it\n"
-                            "(default: :console:)\n"
-                            "If --hide_output is true, this option has no effect.\n"
-                            "If specified and not ':console:', redirects stdout and stderr to the given log file.\n"
-                            "If specified as ':console:', outputs stdout and stderr to console as normal.\n"
-                            "Multiple --log_file options can be specified, allowing output to multiple log files and/or console.")
+                             "(default: ':console:')\n"
+                             "If ':console:', outputs stdout and stderr to console as normal.\n"
+                            f"If ':none:', hides both stdout and stderr (redirects them to {os.devnull!r}).\n"
+                             "Else, redirects stdout and stderr to the given log file.\n"
+                             "Multiple --log_file options can be specified, allowing output to multiple log files and/or console.")
 
     parser.add_argument('--log_level',
                         choices=[name for level, name in logging._levelToName.items() if level != 0],
                         default=logging._levelToName[logging.WARNING],
-                        help='log level, logged to standard output\n(default: %(default)s)')
+                        help='log level, logged to standard output\n(default: %(default)r)')
 
     parser.add_argument('--log_base_context', default='',
                         help='lines logged to standard output are formatted as:\n'
                              '"[<log_level>][<datetime>][<log_base_context><video_id>] <message>" (without the quotes)\n'
-                             "(default: '%(default)s')")
+                             "(default: %(default)r)")
 
     return parser
 
@@ -1258,12 +1261,17 @@ def main(args):
     if orig_stderr_encoding != 'utf-8':
         sys.stderr.reconfigure(encoding='utf-8')
 
-    if args.hide_output:
-        log_files = [open(os.devnull, 'w')]
-    elif args.log_file:
-        log_files = [open(log_file, 'w') if log_file != ':console:' else None for log_file in args.log_file]
+    def open_log_file(log_file):
+        if log_file == ':console:':
+            return None
+        elif log_file == ':none:':
+            return open(os.devnull, 'w')
+        else:
+            return open(log_file, 'w')
+    if args.log_file:
+        log_files = [open_log_file(log_file) for log_file in args.log_file]
     else:
-        log_files = [None] # effectively ':console:'
+        log_files = [open_log_file(':none:' if args.hide_output else ':console:')]
     orig_stdout = sys.stdout
     orig_stderr = sys.stderr
     out_log_files = [log_file if log_file else sys.stdout for log_file in log_files]
@@ -1403,7 +1411,7 @@ def main(args):
                 pass
             elif(args.output.endswith('.csv')):
                 pass
-            else:
+            else: # assume text file
                 open(args.output, 'w').close()  # empty the file
                 callback = write_to_file
 
