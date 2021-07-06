@@ -475,6 +475,7 @@ class ChatReplayDownloader:
         videoDetails = info.get('videoDetails', {})
         video_details = {
             'title': videoDetails.get('title'),
+            'is_live': videoDetails.get('isLive', False),
             'is_upcoming': videoDetails.get('isUpcoming', False),
         }
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
@@ -875,9 +876,7 @@ class ChatReplayDownloader:
 
                 if continuation_title is None:
                     error_message = config.get('no_chat_error', 'Video does not have a chat replay.')
-                    # TODO: option for: a) no retry, b) retry while upcoming (current), c) retry while not ended
-                    # TODO: also if (b) or (c), option to abort after x time after scheduled start time
-                    if config['is_upcoming']:
+                    if config['is_upcoming'] or config['is_live']:
                         if abort_cond_groups:
                             if abort_cond_checker is None:
                                 def nochat_abort_cond_state_updater(state):
