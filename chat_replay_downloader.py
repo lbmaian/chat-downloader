@@ -15,6 +15,7 @@ import emoji
 import time
 import os
 import numbers
+import collections.abc
 from http.cookiejar import MozillaCookieJar, LoadError
 import sys
 import signal
@@ -511,18 +512,17 @@ class ChatReplayDownloader:
 
     def __extract_heartbeat_params(self, info):
         heartbeatParams = info.get('heartbeatParams', {})
-        # TODO: if not logged in (no/expired YT cookies) or no access to upcoming private stream,
-        # heartbeatToken and intervalMilliseconds aren't available
         heartbeat_params = {
             'heartbeat_params': {
-                'heartbeatToken': heartbeatParams['heartbeatToken'],
-                'heartbeatServerData': heartbeatParams['heartbeatServerData'],
+                'heartbeatToken': heartbeatParams.get('heartbeatToken'),
+                'heartbeatServerData': heartbeatParams.get('heartbeatServerData'),
                 'heartbeatRequestParams': {
                     'heartbeatChecks': ['HEARTBEAT_CHECK_TYPE_LIVE_STREAM_STATUS'],
                 },
             },
-            'heartbeat_interval_secs': float(heartbeatParams['intervalMilliseconds']) / 1000,
+            'heartbeat_interval_secs': float(heartbeatParams['intervalMilliseconds']) / 1000 if 'intervalMilliseconds' in heartbeatParams else None,
         }
+        heartbeat_params = _prune_none_values(heartbeat_params)
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
             self.logger.trace("heartbeat_params:\n{}", _debug_dump(heartbeat_params))
         return heartbeat_params
@@ -1132,6 +1132,22 @@ def _debug_dump(obj, *, ensure_ascii=False, indent=4, default=str, **kwargs):
 
 def _trans_first_char(text, func):
     return func(text[:1]) + text[1:]
+
+# recursively filter out None values from iterables
+# note: does not handle cyclic structures
+def _prune_none_values(obj):
+    if isinstance(obj, collections.abc.Mapping):
+        d = {k: _prune_none_values(v) for k, v in obj.items() if v is not None}
+        if obj.__class__ is not dict:
+            d = obj.__class__(d)
+        return d
+    elif isinstance(obj, collections.abc.Iterable) and not isinstance(obj, (str, collections.abc.ByteString)):
+        l = [_prune_none_values(v) for v in obj if v is not None]
+        if obj.__class__ is not list:
+            l = obj.__class__(l)
+        return l
+    else:
+        return obj
 
 # if adding as a subparser, pass `parser_type=subparsers.add_parser, cmd_name`
 # if adding to an existing parser or argument group, pass as parser parameter
