@@ -719,8 +719,8 @@ class ChatReplayDownloader:
                     orig_formatted = orig_scheduled_start_time.strftime(datetime_format)
                     curr_formatted = scheduled_start_time.strftime(datetime_format)
                     if orig_formatted != curr_formatted:
-                        return "scheduled start time formatted as {!r} changed from {:{}} to {:{}}".format(
-                            datetime_format, orig_scheduled_start_time, datetime_format, scheduled_start_time, datetime_format)
+                        return "scheduled start time formatted as {!r} changed to {:{}} (originally {:{}})".format(
+                            datetime_format, scheduled_start_time, datetime_format, orig_scheduled_start_time, datetime_format)
                 cond_group.append((raw_cond, changed_scheduled_start_time))
 
             elif cond_name == 'min_time_until_scheduled_start_time':
@@ -734,10 +734,12 @@ class ChatReplayDownloader:
                         min_secs=min_secs, **_):
                     if not scheduled_start_time:
                         return None # falsy
-                    secs_until_scheduled_start_time = scheduled_start_time.timestamp() - time.time()
+                    current_time = time.time()
+                    secs_until_scheduled_start_time = scheduled_start_time.timestamp() - current_time
                     if secs_until_scheduled_start_time > min_secs:
-                        return f"time until scheduled start time {secs_until_scheduled_start_time} secs >= {min_secs} secs"
-                    return None
+                        return "current time ({:{}}) until scheduled start time ({:{}}): {} secs >= {} secs".format(
+                            datetime.fromtimestamp(current_time), cls.DATETIME_FORMAT, scheduled_start_time, cls.DATETIME_FORMAT,
+                            secs_until_scheduled_start_time, min_secs)
                 cond_group.append((raw_cond, min_time_until_scheduled_start_time))
 
             elif cond_name == 'file_exists':
@@ -790,13 +792,14 @@ class ChatReplayDownloader:
                 break # next iteration would start at end of string and match empty string, which we want to avoid
 
     class AbortConditionChecker:
-        def __init__(self, logger, cond_groups, *state_funcs, state={}):
+        def __init__(self, logger, cond_groups, *state_funcs, state=None):
             self.logger = logger
             self.cond_groups = cond_groups
             self.state_funcs = state_funcs
-            self.state = loggingutils.ChangelogMapWrapper(state)
+            self.state = loggingutils.ChangelogMapWrapper({} if state is None else state)
 
         def check(self):
+            # TODO: move state updating out of AbortConditionChecker since should be done regardless of abort conditions for logging purposes
             # update state first
             for prereq_func in self.state_funcs:
                 prereq_func(self.state)
@@ -859,6 +862,10 @@ class ChatReplayDownloader:
         chat_replay_field = '{} chat replay'.format(chat_type_field)
         chat_live_field = '{} chat'.format(chat_type_field)
 
+        abort_cond_state = {
+            'orig_scheduled_start_time': None,
+        }
+
         try:
             abort_cond_checker = None
             continuation_title = None
@@ -883,9 +890,10 @@ class ChatReplayDownloader:
                                     state.info['playability_status'] = config['playability_status']
                                     scheduled_start_time = config['scheduled_start_time']
                                     state.info['scheduled_start_time'] = scheduled_start_time
-                                    if 'orig_scheduled_start_time' not in state:
+                                    if state.get('orig_scheduled_start_time') is None:
                                         state.debug['orig_scheduled_start_time'] = scheduled_start_time
-                                abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups, nochat_abort_cond_state_updater)
+                                abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups,
+                                    nochat_abort_cond_state_updater, state=abort_cond_state)
                             abort_cond_checker.check()
 
                         retry_wait_secs = random.randint(45, 60) # jitter
@@ -898,7 +906,7 @@ class ChatReplayDownloader:
                 else:
                     break
             continuation = continuation_by_title_map[continuation_title]
-            # TODO: get local title from microformat, poll request https://www.youtube.com/youtubei/v1/updated_metadata for locale tile updates
+            # TODO: get local title from microformat, poll request https://www.youtube.com/youtubei/v1/updated_metadata for local title updates
             # and https://www.youtube.com/youtubei/v1/updated_metadata for page title updates,
             # fallback to https://www.youtube.com/get_video_info for both and scheduled start time updates
             if self.logger.isEnabledFor(logging.INFO):
@@ -918,7 +926,8 @@ class ChatReplayDownloader:
                                 state.info['playability_status'] = config['playability_status']
                                 scheduled_start_time = config['scheduled_start_time']
                                 state.info['scheduled_start_time'] = scheduled_start_time
-                                state.debug['orig_scheduled_start_time'] = config['scheduled_start_time']
+                                if state.get('orig_scheduled_start_time') is None:
+                                    state.debug['orig_scheduled_start_time'] = scheduled_start_time
                             # if playability status is already OK, video has started (is no longer upcoming), so stop updating state
                             elif state['playability_status'] != 'OK':
                                 now_timestamp = time.time()
@@ -929,7 +938,8 @@ class ChatReplayDownloader:
                                     else:
                                         playability_info = self.__get_playability_info(config, video_id)
                                     state.info.update(playability_info)
-                        abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups, abort_cond_state_updater)
+                        abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups,
+                            abort_cond_state_updater, state=abort_cond_state)
                     abort_cond_checker.check()
 
                 try:
