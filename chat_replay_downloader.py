@@ -705,22 +705,41 @@ class ChatReplayDownloader:
 
             if cond_name == 'changed_scheduled_start_time':
                 datetime_format = cond_arg
+                if datetime_format.startswith('+'):
+                    datetime_format = datetime_format[1:]
+                    change_type = 'increased'
+                elif datetime_format.startswith('-'):
+                    datetime_format = datetime_format[1:]
+                    change_type = 'decreased'
+                else:
+                    change_type = 'changed'
                 # test format round-trip
                 try:
-                    sample_formatted = datetime.strptime(datetime.now().strftime(datetime_format), datetime_format)
+                    sample_formatted = datetime.now().strftime(datetime_format)
+                    datetime.strptime(sample_formatted, datetime_format)
                 except ValueError as e:
                     raise error_gen(f"({raw_cond_group}) {e}")
-                cls.logger.debug("abort condition {}: format {!r} => e.g. {!r}", cond_name, datetime_format, sample_formatted)
+                cls.logger.debug("abort condition {}: {!r} => type {!r}, format {!r} (e.g. {!r})", cond_name, cond_arg,
+                    change_type, datetime_format, sample_formatted)
                 def changed_scheduled_start_time(orig_scheduled_start_time, scheduled_start_time,
                         # trick to 'fix' the value of variable for this function, since variable changes over loop iterations
-                        datetime_format=datetime_format, **_):
+                        datetime_format=datetime_format, change_type=change_type, **_):
                     if not orig_scheduled_start_time or not scheduled_start_time:
                         return None # falsy
+                    if change_type == 'increased':
+                        if orig_scheduled_start_time <= scheduled_start_time: # only consider increases in scheduled start date
+                            return None
+                    elif change_type == 'decreased':
+                        if orig_scheduled_start_time >= scheduled_start_time: # only consider decreases in scheduled start date
+                            return None
+                    else: # if change_type == 'changed'
+                        if orig_scheduled_start_time == scheduled_start_time: # consider any changes in scheduled start date
+                            return None
                     orig_formatted = orig_scheduled_start_time.strftime(datetime_format)
                     curr_formatted = scheduled_start_time.strftime(datetime_format)
                     if orig_formatted != curr_formatted:
-                        return "scheduled start time formatted as {!r} changed to {:{}} (originally {:{}})".format(
-                            datetime_format, scheduled_start_time, datetime_format, orig_scheduled_start_time, datetime_format)
+                        return "scheduled start time formatted as {!r} {} to {:{}} (originally {:{}})".format(datetime_format,
+                            change_type, scheduled_start_time, datetime_format, orig_scheduled_start_time, datetime_format)
                 cond_group.append((raw_cond, changed_scheduled_start_time))
 
             elif cond_name == 'min_time_until_scheduled_start_time':
@@ -774,8 +793,8 @@ class ChatReplayDownloader:
 
         return cond_group
 
-    # splits on + while handling escapes \\ and \+
-    _ABORT_CONDITION_TOKEN_REGEX = re.compile(r'((?:\\.|[^+\\])*)([+]|$)')
+    # splits on + while handling escapes \\ and \&
+    _ABORT_CONDITION_TOKEN_REGEX = re.compile(r'((?:\\.|[^&\\])*)([&]|$)')
     @classmethod
     def _tokenize_abort_condition_group(cls, raw_cond_group, error_gen):
         prev_pos = 0
@@ -786,7 +805,7 @@ class ChatReplayDownloader:
             if len(raw_cond) == 0:
                 raise error_gen(f"({raw_cond_group}) condition cannot be empty")
             else:
-                yield raw_cond.replace('\\+', '+').replace('\\\\', '\\')
+                yield raw_cond.replace('\\&', '&').replace('\\\\', '\\')
             prev_pos = m.end()
             if len(m[2]) == 0: # matched end of string
                 break # next iteration would start at end of string and match empty string, which we want to avoid
@@ -1198,11 +1217,13 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                         help="a condition on which this application aborts (note: ctrl+c is such a condition by default)\n"
                              "Available conditions for upcoming streams:\n"
                              "* changed_scheduled_start_time:<strftime format e.g. %%Y%%m%%d> [YouTube-only]\n"
-                             "  True if datetime.strftime(<strftime format>) changes between initially fetched scheduled start datetime.\n"
+                             "  True if datetime.strftime(<strftime format>) changes between initially fetched scheduled start datetime\n"
                              "  and latest fetched scheduled start datetime.\n"
+                             "  If <strftime format> starts with a plus sign (+), only considers increases in scheduled start datetime.\n"
+                             "  If <strftime format> starts with a minus sign (-), only considers decreases in scheduled start datetime.\n"
                              "* min_time_until_scheduled_start_time:<hours>:<minutes> [YouTube-only]\n"
                              "  True if (latest fetched scheduled start datetime - current datetime) >= timedelta(hours=<hours>, minutes=<minutes>).\n"
-                             "Other available conditions:\n" +
+                             "Other available conditions:\n"
                              "* file_exists:<path>\n"
                              "  True if <path>, given as either relative to working directory or absolute, exists (whether before or during execution).\n"
                              "  Note: argument may need to be quoted if <path> contains e.g. whitespace.\n"
@@ -1211,9 +1232,9 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                              ''.join(f"  * {abort_type.name}\n{textwrap.indent(abort_type.value, '    ')}\n" for abort_type in SignalAbortType) +
                              "  Note: this cannot be grouped with other abort conditions within a single --abort_condition option (see below).\n"
                              "Multiple abort conditions (excluding the signal abort condition) can be specified within a single --abort_condition option,\n"
-                             "delimited by + (whitespace allowed before and after, though the whole argument may need to be quoted then),\n"
+                             "delimited by & (whitespace allowed before and after; whole argument may need to be quoted depending on shell),\n"
                              "and such abort conditions are ANDed together as a 'condition group'.\n"
-                             "In case a condition argument itself must contain +, + can be escaped as \\+ (and \\ can be escaped as \\\\).\n"
+                             "In case a condition argument itself must contain &, & can be escaped as \\& (and \\ can be escaped as \\\\).\n"
                              "Multiple --abort_condition options can be specified, and the condition groups represented by each option are ORed together.\n"
                              "Example:\n"
                              "  --abort_condition 'changed_scheduled_start_time:%%Y%%m%%d + min_time_until_scheduled_start_time:00:10'\n"
