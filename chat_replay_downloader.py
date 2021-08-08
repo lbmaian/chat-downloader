@@ -334,25 +334,29 @@ class ChatReplayDownloader:
         else:  # is a normal link
             return text
 
-    def __parse_message_runs(self, runs):
+    def __parse_message_runs(self, message):
         """ Reads and parses YouTube formatted messages (i.e. runs). """
-        message_text = ''
-        for run in runs:
-            if 'text' in run:
-                if 'navigationEndpoint' in run:  # is a link
-                    try:
-                        url = run['navigationEndpoint']['commandMetadata']['webCommandMetadata']['url']
-                        message_text += self.__parse_youtube_link(url)
-                    except:
-                        # if something fails, use default text
-                        message_text += run['text']
+        if isinstance(message, str):
+            self.logger.warning('message is str rather than dict:\t{}', message)
+            message_text = message
+        else:
+            message_text = ''
+            for run in message.get('runs', ()):
+                if 'text' in run:
+                    if 'navigationEndpoint' in run:  # is a link
+                        try:
+                            url = run['navigationEndpoint']['commandMetadata']['webCommandMetadata']['url']
+                            message_text += self.__parse_youtube_link(url)
+                        except:
+                            # if something fails, use default text
+                            message_text += run['text']
 
-                else:  # is a normal message
-                    message_text += run['text']
-            elif 'emoji' in run:
-                message_text += run['emoji']['shortcuts'][0]
-            else:
-                message_text += str(run)
+                    else:  # is a normal message
+                        message_text += run['text']
+                elif 'emoji' in run:
+                    message_text += run['emoji']['shortcuts'][0]
+                else:
+                    message_text += str(run)
 
         return message_text
 
@@ -428,7 +432,7 @@ class ChatReplayDownloader:
             error_message = 'Video does not have a chat replay.'
             try:
                 error_message = self.__parse_message_runs(
-                    contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text']['runs'])
+                    contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text'])
             except LookupError:
                 pass
             config['no_chat_error'] = error_message
@@ -666,7 +670,7 @@ class ChatReplayDownloader:
             return data
 
         data['message'] = self.__parse_message_runs(
-            data['message']['runs']) if 'message' in data else None
+            data['message']) if 'message' in data else None
 
         timestamp = data.get('timestamp')
         if timestamp:
