@@ -989,60 +989,63 @@ class ChatReplayDownloader:
 
                 if('actions' in info):
                     for action in info['actions']:
-                        data = {}
+                        try:
+                            data = {}
 
-                        if('replayChatItemAction' in action):
-                            replay_chat_item_action = action['replayChatItemAction']
-                            if('videoOffsetTimeMsec' in replay_chat_item_action):
-                                data['video_offset_time_msec'] = int(
-                                    replay_chat_item_action['videoOffsetTimeMsec'])
-                            action = replay_chat_item_action['actions'][0]
+                            if('replayChatItemAction' in action):
+                                replay_chat_item_action = action['replayChatItemAction']
+                                if('videoOffsetTimeMsec' in replay_chat_item_action):
+                                    data['video_offset_time_msec'] = int(
+                                        replay_chat_item_action['videoOffsetTimeMsec'])
+                                action = replay_chat_item_action['actions'][0]
 
-                        action.pop('clickTrackingParams', None)
-                        action_name = list(action.keys())[0]
-                        if('item' not in action[action_name]):
-                            # not a valid item to display (usually message deleted)
-                            continue
+                            action.pop('clickTrackingParams', None)
+                            action_name = list(action.keys())[0]
+                            if('item' not in action[action_name]):
+                                # not a valid item to display (usually message deleted)
+                                continue
 
-                        item = action[action_name]['item']
-                        index = list(item.keys())[0]
+                            item = action[action_name]['item']
+                            index = list(item.keys())[0]
 
-                        if(index in self.__TYPES_OF_MESSAGES['ignore']):
-                            # can ignore message (not a chat message)
-                            continue
+                            if(index in self.__TYPES_OF_MESSAGES['ignore']):
+                                # can ignore message (not a chat message)
+                                continue
 
-                        # user wants everything, keep going
-                        if(message_type == 'all'):
-                            pass
+                            # user wants everything, keep going
+                            if(message_type == 'all'):
+                                pass
 
-                        # user does not want superchat + message is superchat
-                        elif(message_type != 'superchat' and index in self.__TYPES_OF_MESSAGES['superchat']):
-                            continue
+                            # user does not want superchat + message is superchat
+                            elif(message_type != 'superchat' and index in self.__TYPES_OF_MESSAGES['superchat']):
+                                continue
 
-                        # user does not want normal messages + message is normal
-                        elif(message_type != 'messages' and index in self.__TYPES_OF_MESSAGES['message']):
-                            continue
+                            # user does not want normal messages + message is normal
+                            elif(message_type != 'messages' and index in self.__TYPES_OF_MESSAGES['message']):
+                                continue
 
-                        data = dict(self.__parse_item(item), **data)
+                            data = dict(self.__parse_item(item), **data)
 
-                        time_in_seconds = data['time_in_seconds'] if 'time_in_seconds' in data else None
+                            time_in_seconds = data['time_in_seconds'] if 'time_in_seconds' in data else None
 
-                        valid_seconds = time_in_seconds is not None
-                        if(end_time is not None and valid_seconds and time_in_seconds > end_time):
-                            return messages
+                            valid_seconds = time_in_seconds is not None
+                            if(end_time is not None and valid_seconds and time_in_seconds > end_time):
+                                return messages
 
-                        if(is_live or start_time is None or (valid_seconds and time_in_seconds >= start_time)):
-                            messages.append(data)
+                            if(is_live or start_time is None or (valid_seconds and time_in_seconds >= start_time)):
+                                messages.append(data)
 
-                            if(callback is None):
-                                self.print_item(data)
+                                if(callback is None):
+                                    self.print_item(data)
 
-                            elif(callable(callback)):
-                                try:
-                                    callback(data)
-                                except TypeError:
-                                    raise CallbackFunction(
-                                        'Incorrect number of parameters for function '+callback.__name__)
+                                elif(callable(callback)):
+                                    try:
+                                        callback(data)
+                                    except TypeError:
+                                        raise CallbackFunction(
+                                            'Incorrect number of parameters for function '+callback.__name__)
+                        except Exception:
+                            _print_stacktrace('Error encountered handling item:\n' + _debug_dump(action))
                 else:
                     # no more actions to process in a chat replay
                     if(not is_live):
@@ -1180,6 +1183,19 @@ def _prune_none_values(obj):
         return l
     else:
         return obj
+
+def _print_stacktrace(message=None):
+    # print full stack trace (rather than only up to the containing method)
+    import traceback
+    stacklines = traceback.format_exc().splitlines(keepends=True)
+    # first line of stacklines is always "Traceback (most recent call last):", so insert after this
+    # exclude the last 2 frames from traceback.extract_stack(), which are the call extract_stack() itself and _print_stacktrace
+    stacklines[1:1] = traceback.format_list(traceback.extract_stack()[:-2])
+    # not using logger.error in case logging system somehow failed
+    log_prefix = f"[ERROR][{datetime.now():{ChatReplayDownloader.DATETIME_FORMAT}}]"
+    if message is not None:
+        print(log_prefix, message)
+    print(log_prefix, ''.join(stacklines), end='', file=sys.stderr)
 
 # if adding as a subparser, pass `parser_type=subparsers.add_parser, cmd_name`
 # if adding to an existing parser or argument group, pass as parser parameter
@@ -1471,12 +1487,7 @@ def main(args):
     except SystemExit: # finalize_output may call sys.exit() which raises SystemExit
         pass # in case main() is being called from another module, don't actually exit the app
     except Exception:
-        # print full stack trace (rather than only up to main(), the containing method)
-        import traceback
-        stacklines = traceback.format_exc().splitlines(keepends=True)
-        stacklines[1:1] = traceback.format_list(traceback.extract_stack()[:-1])
-        # not using logger.error in case logging system somehow failed
-        print(f"[ERROR][{datetime.now():{ChatReplayDownloader.DATETIME_FORMAT}}]", ''.join(stacklines), end='', file=sys.stderr)
+        _print_stacktrace()
     finally:
         finalize_output()
 
