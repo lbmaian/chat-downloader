@@ -337,7 +337,6 @@ class ChatReplayDownloader:
     def __parse_message_runs(self, message):
         """ Reads and parses YouTube formatted messages (i.e. runs). """
         if isinstance(message, str):
-            self.logger.warning('message is str rather than dict:\t{}', message)
             message_text = message
         else:
             message_text = ''
@@ -1189,7 +1188,7 @@ def _print_stacktrace(message=None):
     import traceback
     stacklines = traceback.format_exc().splitlines(keepends=True)
     # first line of stacklines is always "Traceback (most recent call last):", so insert after this
-    # exclude the last 2 frames from traceback.extract_stack(), which are the call extract_stack() itself and _print_stacktrace
+    # exclude the last 2 frames from traceback.extract_stack(), which are the call to extract_stack() itself and _print_stacktrace
     stacklines[1:1] = traceback.format_list(traceback.extract_stack()[:-2])
     # not using logger.error in case logging system somehow failed
     log_prefix = f"[ERROR][{datetime.now():{ChatReplayDownloader.DATETIME_FORMAT}}]"
