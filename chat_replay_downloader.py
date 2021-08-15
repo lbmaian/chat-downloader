@@ -1082,7 +1082,7 @@ class ChatReplayDownloader:
     @_log_with_video_id
     def get_twitch_messages(self, video_id, start_time=None, end_time=None, callback=None, output_messages=None, **kwargs):
         """ Get chat messages for a Twitch stream. """
-        start_time = self.__ensure_seconds(start_time, None)
+        start_time = self.__ensure_seconds(start_time, 0)
         end_time = self.__ensure_seconds(end_time, None)
 
         messages = [] if output_messages is None else output_messages
