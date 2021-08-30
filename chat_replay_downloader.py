@@ -353,7 +353,11 @@ class ChatReplayDownloader:
                     else:  # is a normal message
                         message_text += run['text']
                 elif 'emoji' in run:
-                    message_text += run['emoji']['shortcuts'][0]
+                    emoji_info = run['emoji']
+                    if 'shortcuts' in emoji_info:
+                        message_text += emoji_info['shortcuts'][0]
+                    else:
+                        message_text += emoji_info['emojiId']
                 else:
                     message_text += str(run)
 
