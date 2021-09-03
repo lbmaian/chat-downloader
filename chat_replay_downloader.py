@@ -147,7 +147,7 @@ class ChatReplayDownloader:
             # superchat messages which appear in chat
             'liveChatMembershipItemRenderer',
             'liveChatPaidMessageRenderer',
-            'liveChatPaidStickerRenderer'
+            'liveChatPaidStickerRenderer',
             # superchat messages which appear ticker (at the top)
             'liveChatTickerPaidStickerItemRenderer',
             'liveChatTickerPaidMessageItemRenderer',
@@ -166,6 +166,7 @@ class ChatReplayDownloader:
         'authorName': 'author',
         'purchaseAmountText': 'amount',
         'message': 'message',
+        'sticker': 'sticker',
         'headerBackgroundColor': 'header_color',
         'bodyBackgroundColor': 'body_color',
         'timestampText': 'time_text',
@@ -361,6 +362,13 @@ class ChatReplayDownloader:
                 else:
                     message_text += str(run)
 
+        return message_text
+
+    def __parse_sticker(self, sticker):
+        """Reads and parses YouTube sticker messages."""
+        message_text = sticker.get('accessibility', {}).get('accessibilityData', {}).get('label', '')
+        if message_text:
+            message_text = '<<' + message_text + '>>'
         return message_text
 
     '''
@@ -634,7 +642,7 @@ class ChatReplayDownloader:
 
         # Never before seen index, may cause error (used for debugging)
         if(index not in self.__TYPES_OF_KNOWN_MESSAGES):
-            pass
+            self.logger.warning(f"unknown message type: {index}")
 
         important_item_info = {key: value for key, value in item_info.items(
         ) if key in self.__IMPORTANT_KEYS_AND_REMAPPINGS}
@@ -672,8 +680,12 @@ class ChatReplayDownloader:
                 item_info['showItemEndpoint']['showLiveChatItemEndpoint']['renderer']))
             return data
 
-        data['message'] = self.__parse_message_runs(
-            data['message']) if 'message' in data else None
+        if 'message' in data:
+            data['message'] = self.__parse_message_runs(data['message'])
+        elif 'sticker' in data:
+            data['message'] = self.__parse_sticker(data.pop('sticker'))
+        else:
+            data['message'] = None
 
         timestamp = data.get('timestamp')
         if timestamp:
