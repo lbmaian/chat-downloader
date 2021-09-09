@@ -404,6 +404,7 @@ class ChatReplayDownloader:
     def __parse_video_text(self, regex_key, html):
         m = self.__YT_HTML_REGEXES[regex_key].search(html)
         if not m:
+            self.logger.debug("video HTML:\n{}", html)
             raise ParsingError('Unable to parse video data. Please try again.')
         data, _ = self.__json_decoder.raw_decode(m.group(1))
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
