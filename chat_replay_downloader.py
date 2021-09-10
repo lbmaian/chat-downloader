@@ -16,7 +16,7 @@ import time
 import os
 import numbers
 import collections.abc
-from http.cookiejar import MozillaCookieJar, LoadError
+from http.cookiejar import MozillaCookieJar
 import sys
 import signal
 from urllib import parse
@@ -184,12 +184,14 @@ class ChatReplayDownloader:
         self.session.headers = self.__HEADERS
 
         Retry.BACKOFF_MAX = 2 ** 5
-        self.session.mount('https://', HTTPAdapter(max_retries=Retry(
+        http_adapter = HTTPAdapter(max_retries=Retry(
             total=10,
             # Retry doesn't have jitter functionality; following random usage is a poor man's version that only jitters backoff_factor across sessions.
             backoff_factor=random.uniform(1.0, 1.5),
             status_forcelist=[413, 429, 500, 502, 503, 504], # also retries on connection/read timeouts
-            allowed_methods=False))) # retry on any HTTP method (including GET and POST)
+            allowed_methods=False)) # retry on any HTTP method (including GET and POST)
+        self.session.mount('https://', http_adapter)
+        self.session.mount('http://', http_adapter)
 
         # TODO: add option to save or update cookies file when finished
         cj = MozillaCookieJar(cookies)
@@ -1494,10 +1496,8 @@ def main(args):
         print('[Video Unavailable]', e, flush=True)
     except TwitchError as e:
         print('[Twitch Error]', e, flush=True)
-    except (LoadError, CookieError) as e:
+    except CookieError as e:
         print('[Cookies Error]', e, flush=True)
-    except requests.exceptions.RequestException as e:
-        print('[HTTP Request Error]', e, flush=True)
     except KeyboardInterrupt: # this should already be caught within get_chat_replay, but keeping this just in case
         print('[Interrupted]', flush=True)
     except SystemExit: # finalize_output may call sys.exit() which raises SystemExit
