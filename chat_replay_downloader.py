@@ -767,10 +767,10 @@ class ChatReplayDownloader:
                     if not orig_scheduled_start_time or not scheduled_start_time:
                         return None # falsy
                     if change_type == 'increased':
-                        if orig_scheduled_start_time <= scheduled_start_time: # only consider increases in scheduled start date
+                        if orig_scheduled_start_time >= scheduled_start_time: # only consider increases in scheduled start date
                             return None
                     elif change_type == 'decreased':
-                        if orig_scheduled_start_time >= scheduled_start_time: # only consider decreases in scheduled start date
+                        if orig_scheduled_start_time <= scheduled_start_time: # only consider decreases in scheduled start date
                             return None
                     else: # if change_type == 'changed'
                         if orig_scheduled_start_time == scheduled_start_time: # consider any changes in scheduled start date
@@ -948,9 +948,9 @@ class ChatReplayDownloader:
                                 def nochat_abort_cond_state_updater(state):
                                     state.info['playability_status'] = config['playability_status']
                                     scheduled_start_time = config['scheduled_start_time']
-                                    state.info['scheduled_start_time'] = scheduled_start_time
                                     if state.get('orig_scheduled_start_time') is None:
                                         state.debug['orig_scheduled_start_time'] = scheduled_start_time
+                                    state.info['scheduled_start_time'] = scheduled_start_time
                                 abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups,
                                     nochat_abort_cond_state_updater, state=abort_cond_state)
                             abort_cond_checker.check()
@@ -984,9 +984,9 @@ class ChatReplayDownloader:
                                 state.trace['poll_timestamp'] = time.time()
                                 state.info['playability_status'] = config['playability_status']
                                 scheduled_start_time = config['scheduled_start_time']
-                                state.info['scheduled_start_time'] = scheduled_start_time
                                 if state.get('orig_scheduled_start_time') is None:
                                     state.debug['orig_scheduled_start_time'] = scheduled_start_time
+                                state.info['scheduled_start_time'] = scheduled_start_time
                             # if playability status is already OK, video has started (is no longer upcoming), so stop updating state
                             elif state['playability_status'] != 'OK':
                                 now_timestamp = time.time()
