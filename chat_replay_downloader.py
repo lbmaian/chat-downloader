@@ -178,6 +178,8 @@ class ChatReplayDownloader:
         'backgroundColor': 'body_color'
     }
 
+    __MAX_RETRIES = 10
+
     def __init__(self, cookies=None):
         """Initialise a new session for making requests."""
         self.session = requests.Session()
@@ -185,7 +187,7 @@ class ChatReplayDownloader:
 
         Retry.BACKOFF_MAX = 2 ** 5
         http_adapter = HTTPAdapter(max_retries=Retry(
-            total=10,
+            total=self.__MAX_RETRIES,
             # Retry doesn't have jitter functionality; following random usage is a poor man's version that only jitters backoff_factor across sessions.
             backoff_factor=random.uniform(1.0, 1.5),
             status_forcelist=[413, 429, 500, 502, 503, 504], # also retries on connection/read timeouts
@@ -206,13 +208,25 @@ class ChatReplayDownloader:
 
     def __session_get(self, url, post_payload=None):
         """Make a request using the current session."""
-        if post_payload is None:
-            response = self.session.get(url, timeout=10)
-        else:
-            if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
-                self.logger.trace("HTTP POST {!r} <= payload JSON (pretty-printed):\n{}", url, _debug_dump(post_payload)) # too verbose
-            post_payload = json.dumps(post_payload)
-            response = self.session.post(url, data=post_payload, timeout=10)
+        connection_read_timeout_try_ct = 1
+        while True:
+            try:
+                if post_payload is None:
+                    response = self.session.get(url, timeout=10)
+                    break
+                else:
+                    if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
+                        self.logger.trace("HTTP POST {!r} <= payload JSON (pretty-printed):\n{}", url, _debug_dump(post_payload)) # too verbose
+                    post_payload = json.dumps(post_payload)
+                    response = self.session.post(url, data=post_payload, timeout=10)
+                    break
+            # Workaround for https://stackoverflow.com/questions/67614642/python-requests-urrllib3-retry-on-read-timeout-after-200-header-received
+            except requests.exceptions.ConnectionError as e:
+                if str(e).endswith('Read timed out.') and connection_read_timeout_try_ct <= self.__MAX_RETRIES:
+                    _print_stacktrace(f"{e!r}: try {connection_read_timeout_try_ct}", self.logger.warning) # and continue to next try
+                    connection_read_timeout_try_ct += 1
+                else:
+                    raise
         return response
 
     def __session_get_json(self, url, post_payload=None):
@@ -645,7 +659,7 @@ class ChatReplayDownloader:
 
         # Never before seen index, may cause error (used for debugging)
         if(index not in self.__TYPES_OF_KNOWN_MESSAGES):
-            self.logger.warning(f"unknown message type: {index}")
+            self.logger.warning("unknown message type: {}", index)
 
         important_item_info = {key: value for key, value in item_info.items(
         ) if key in self.__IMPORTANT_KEYS_AND_REMAPPINGS}
@@ -1202,18 +1216,20 @@ def _prune_none_values(obj):
     else:
         return obj
 
-def _print_stacktrace(message=None):
-    # print full stack trace (rather than only up to the containing method)
+# print full stack trace (rather than only up to the containing method)
+def _print_stacktrace(message=None, log=None):
     import traceback
+    # using print by default rather than logger in case logging system somehow failed
+    if log is None:
+        log_prefix = f"[ERROR][{datetime.now():{ChatReplayDownloader.DATETIME_FORMAT}}]"
+        log = lambda x: print(log_prefix, x, file=sys.stderr)
     stacklines = traceback.format_exc().splitlines(keepends=True)
     # first line of stacklines is always "Traceback (most recent call last):", so insert after this
     # exclude the last 2 frames from traceback.extract_stack(), which are the call to extract_stack() itself and _print_stacktrace
     stacklines[1:1] = traceback.format_list(traceback.extract_stack()[:-2])
-    # not using logger.error in case logging system somehow failed
-    log_prefix = f"[ERROR][{datetime.now():{ChatReplayDownloader.DATETIME_FORMAT}}]"
     if message is not None:
-        print(log_prefix, message)
-    print(log_prefix, ''.join(stacklines), end='', file=sys.stderr)
+        log(message)
+    log(''.join(stacklines).rstrip())
 
 # if adding as a subparser, pass `parser_type=subparsers.add_parser, cmd_name`
 # if adding to an existing parser or argument group, pass as parser parameter
