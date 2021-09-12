@@ -701,8 +701,12 @@ class ChatReplayDownloader:
             data['message'] = self.__parse_message_runs(data['message'])
         elif 'sticker' in data:
             data['message'] = self.__parse_sticker(data.pop('sticker'))
+        elif 'amount' in data:
+            data['message'] = '<<no message>>' # superchats can omit message
         else:
             data['message'] = None
+        if data['message'] is None:
+            self.logger.warning("could not extract message from item:\n{}", _debug_dump(item))
 
         timestamp = data.get('timestamp')
         if timestamp:
