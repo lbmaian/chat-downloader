@@ -208,6 +208,10 @@ class ChatReplayDownloader:
 
     def __session_get(self, url, post_payload=None):
         """Make a request using the current session."""
+        if post_payload is not None:
+            if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
+                self.logger.trace("HTTP POST {!r} <= payload JSON (pretty-printed):\n{}", url, _debug_dump(post_payload)) # too verbose
+            post_payload = json.dumps(post_payload)
         connection_read_timeout_try_ct = 1
         while True:
             try:
@@ -215,9 +219,6 @@ class ChatReplayDownloader:
                     response = self.session.get(url, timeout=10)
                     break
                 else:
-                    if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
-                        self.logger.trace("HTTP POST {!r} <= payload JSON (pretty-printed):\n{}", url, _debug_dump(post_payload)) # too verbose
-                    post_payload = json.dumps(post_payload)
                     response = self.session.post(url, data=post_payload, timeout=10)
                     break
             # Workaround for https://stackoverflow.com/questions/67614642/python-requests-urrllib3-retry-on-read-timeout-after-200-header-received
