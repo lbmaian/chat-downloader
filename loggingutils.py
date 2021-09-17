@@ -375,7 +375,26 @@ def contextdecorator(dec_func):
     return helper
 
 
-class DateFileHandler(logging.FileHandler):
+class FileHandler(logging.FileHandler):
+    """
+    `logging.FileHandler` with customizable file newline setting.
+    """
+
+    __slots__ = 'newline'
+
+    def __init__(self, *args, **kwargs):
+        self.newline = kwargs.pop('newline', None)
+        super().__init__(*args, **kwargs)
+
+    def _open(self):
+        """
+        Open the current base file with the (original) mode/encoding/newline.
+        Return the resulting stream.
+        """
+        return open(self.baseFilename, self.mode, encoding=self.encoding, newline=self.newline, errors=self.errors)
+
+
+class DateFileHandler(FileHandler):
     """
     This provides similar functionality to `logging.handlers.TimedRotatingFileHandler`, the main difference being:
 
