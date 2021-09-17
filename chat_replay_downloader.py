@@ -1335,6 +1335,10 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                              '"[<log_level>][<datetime>][<log_base_context><video_id>] <message>" (without the quotes)\n'
                              "(default: %(default)r)")
 
+    parser.add_argument('--newline', default='',
+                        help='newline terminator as a Python-escaped string, e.g. \\r\\n for Windows-style CRLF\n'
+                             '(default: empty string, which means use the system default, e.g. CRLF on Windows)')
+
     return parser
 
 def main(args):
@@ -1348,13 +1352,22 @@ def main(args):
     parser = gen_arg_parser(abort_signals)
     args = parser.parse_args(args)
 
-    # set encoding of standard output and standard error to utf-8
+    # to be passed to open/reconfigure function as newline argument
+    if args.newline:
+        # if args.newline is not empty, it's a Python-escaped string, so need to unescape it
+        import ast
+        newline = ast.literal_eval('"' + args.newline + '"')
+    else:
+        # if args.newline is empty, ensure newline=None is passed to open function for universal newlines
+        newline = None
+
+    # ensure utf8 encoding and newline setting for stdout and stderr
     orig_stdout_encoding = sys.stdout.encoding
-    if orig_stdout_encoding != 'utf-8':
-        sys.stdout.reconfigure(encoding='utf-8')
+    if orig_stdout_encoding != 'utf-8' or newline:
+        sys.stdout.reconfigure(encoding='utf-8', newline=newline)
     orig_stderr_encoding = sys.stderr.encoding
-    if orig_stderr_encoding != 'utf-8':
-        sys.stderr.reconfigure(encoding='utf-8')
+    if orig_stderr_encoding != 'utf-8' or newline:
+        sys.stderr.reconfigure(encoding='utf-8', newline=newline)
 
     def open_log_file(log_file):
         if log_file == ':console:':
@@ -1362,7 +1375,7 @@ def main(args):
         elif log_file == ':none:':
             return open(os.devnull, 'w')
         else:
-            return open(log_file, 'w')
+            return open(log_file, 'w', encoding='utf-8-sig', newline=newline)
     if args.log_file:
         log_files = [open_log_file(log_file) for log_file in args.log_file]
     else:
@@ -1406,7 +1419,7 @@ def main(args):
             if chat_messages and args.output:
                 if(args.output.endswith('.json')):
                     num_of_messages = len(chat_messages)
-                    with open(args.output, 'w', newline='', encoding='utf-8-sig') as f:
+                    with open(args.output, 'w', encoding='utf-8-sig', newline=newline) as f:
                         json.dump(chat_messages, f, sort_keys=True)
 
                 elif(args.output.endswith('.csv')):
@@ -1416,8 +1429,13 @@ def main(args):
                         fieldnames.update(message.keys())
                     fieldnames = sorted(fieldnames)
 
-                    with open(args.output, 'w', newline='', encoding='utf-8-sig') as f:
-                        fc = csv.DictWriter(f, fieldnames=fieldnames)
+                    csv_dialect = csv.excel
+                    if newline:
+                        class NewlineDialect(csv.excel):
+                            lineterminator = newline
+                        csv_dialect = NewlineDialect
+                    with open(args.output, 'w', encoding='utf-8-sig', newline='') as f:
+                        fc = csv.DictWriter(f, fieldnames=fieldnames, dialect=csv_dialect)
                         fc.writeheader()
                         fc.writerows(chat_messages)
 
@@ -1433,10 +1451,11 @@ def main(args):
                         log_file.close()
                 sys.stdout = orig_stdout
                 sys.stderr = orig_stderr
-                if orig_stdout_encoding != 'utf-8':
-                    sys.stdout.reconfigure(encoding=orig_stdout_encoding)
-                if orig_stderr_encoding != 'utf-8':
-                    sys.stderr.reconfigure(encoding=orig_stderr_encoding)
+                # note: no way to get original newline setting, so assume it was None (default)
+                if orig_stdout_encoding != 'utf-8' or newline:
+                    sys.stdout.reconfigure(encoding=orig_stdout_encoding, newline=None)
+                if orig_stderr_encoding != 'utf-8' or newline:
+                    sys.stderr.reconfigure(encoding=orig_stderr_encoding, newline=None)
             finally:
                 if signum:
                     sys.exit()
@@ -1494,7 +1513,7 @@ def main(args):
                 return
 
             # only file format capable of appending properly
-            with open(args.output, 'a', newline='', encoding='utf-8-sig') as f:
+            with open(args.output, 'a', encoding='utf-8-sig', newline=newline) as f:
                 num_of_messages += 1
                 print_item(item)
                 text = chat_downloader.message_to_string(item)
