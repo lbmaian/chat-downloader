@@ -1508,17 +1508,17 @@ def main(args):
         chat_downloader.get_chat_replay(callback=callback, output_messages=chat_messages, **vars(args))
 
     except InvalidURL as e:
-        print('[Invalid URL]', e, flush=True)
+        print('[ERROR][Invalid URL]', e, flush=True)
     except ParsingError as e:
-        print('[Parsing Error]', e, flush=True)
+        print('[ERROR][Parsing Error]', e, flush=True)
     except NoChatReplay as e:
-        print('[No Chat Replay]', e, flush=True)
+        print('[ERROR][No Chat Replay]', e, flush=True)
     except VideoUnavailable as e:
-        print('[Video Unavailable]', e, flush=True)
+        print('[ERROR][Video Unavailable]', e, flush=True)
     except TwitchError as e:
-        print('[Twitch Error]', e, flush=True)
+        print('[ERROR][Twitch Error]', e, flush=True)
     except CookieError as e:
-        print('[Cookies Error]', e, flush=True)
+        print('[ERROR][Cookies Error]', e, flush=True)
     except KeyboardInterrupt: # this should already be caught within get_chat_replay, but keeping this just in case
         print('[Interrupted]', flush=True)
     except SystemExit: # finalize_output may call sys.exit() which raises SystemExit
