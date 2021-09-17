@@ -195,16 +195,19 @@ class ChatReplayDownloader:
         self.session.mount('https://', http_adapter)
         self.session.mount('http://', http_adapter)
 
-        # TODO: add option to save or update cookies file when finished
         cj = MozillaCookieJar(cookies)
         if cookies is not None:
             # Only attempt to load if the cookie file exists.
             if os.path.exists(cookies):
+                self.logger.debug("loading cookies from {!r}", cookies)
                 cj.load(ignore_discard=True, ignore_expires=True)
             else:
-                raise CookieError(
-                    "The file '{}' could not be found.".format(cookies))
+                raise CookieError(f"The file {cookies!r} could not be found.")
         self.session.cookies = cj
+
+    def save_cookies(self, cookies):
+        self.logger.debug("saving cookies to {!r}", cookies)
+        self.session.cookies.save(cookies)
 
     def __session_get(self, url, post_payload=None):
         """Make a request using the current session."""
@@ -1265,7 +1268,10 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                              'Note: logging, which also includes chat messages, may still output to stdout and/or file depending on --log_file)')
 
     parser.add_argument('--cookies', '-c', default=None,
-                        help='name of cookies file\n(default: no cookies used)')
+                        help='name of cookies file to load from\n(default: no cookies loaded)')
+
+    parser.add_argument('--save_cookies', default=None,
+                        help='name of cookies file to save to, which can be the same value as --cookies\n(default: no cookies saved)')
 
     if abort_signals is None:
         abort_cond_type = str # assume this means we don't want to parse the abort conditions themselves
@@ -1506,6 +1512,9 @@ def main(args):
 
         # using output_messages arg rather than return value, in case of uncaught exception or caught signal within the call
         chat_downloader.get_chat_replay(callback=callback, output_messages=chat_messages, **vars(args))
+
+        if args.save_cookies:
+            chat_downloader.save_cookies(args.save_cookies)
 
     except InvalidURL as e:
         print('[ERROR][Invalid URL]', e, flush=True)
