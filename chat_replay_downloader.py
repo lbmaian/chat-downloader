@@ -164,18 +164,19 @@ class ChatReplayDownloader:
         'timestampUsec': 'timestamp',
         'authorExternalChannelId': 'author_id',
         'authorName': 'author',
-        'purchaseAmountText': 'amount',
         'message': 'message',
-        'sticker': 'sticker',
-        'headerBackgroundColor': 'header_color',
-        'bodyBackgroundColor': 'body_color',
         'timestampText': 'time_text',
-        'amount': 'amount',
-        'startBackgroundColor': 'body_color',
-        'durationSec': 'ticker_duration',
-        'detailText': 'message',
-        'headerSubtext': 'message',  # equivalent to message - get runs
-        'backgroundColor': 'body_color'
+        'purchaseAmountText': 'amount', # in liveChatPaidMessageRenderer, liveChatPaidStickerRenderer
+        'headerBackgroundColor': 'header_color', # in liveChatPaidMessageRenderer
+        'bodyBackgroundColor': 'body_color', # in liveChatPaidMessageRenderer
+        'amount': 'amount', # in addLiveChatTickerItemAction
+        'startBackgroundColor': 'body_color', # in addLiveChatTickerItemAction
+        'durationSec': 'ticker_duration', # in liveChatTickerSponsorItemRenderer
+        'detailText': 'message', # in liveChatTickerSponsorItemRenderer
+        'headerPrimaryText': 'header_primary_text', # in liveChatMembershipItemRenderer
+        'headerSubtext': 'header_subtext', # in liveChatMembershipItemRenderer
+        'sticker': 'sticker', # in liveChatPaidStickerRenderer
+        'backgroundColor': 'body_color', # in liveChatPaidStickerRenderer
     }
 
     __MAX_RETRIES = 10
@@ -718,16 +719,29 @@ class ChatReplayDownloader:
                 item_info['showItemEndpoint']['showLiveChatItemEndpoint']['renderer']))
             return data
 
-        if 'message' in data:
-            data['message'] = self.__parse_message_runs(data['message'])
-        elif 'sticker' in data:
-            data['message'] = self.__parse_sticker(data.pop('sticker'))
-        elif 'amount' in data:
-            data['message'] = '<<no message>>' # superchats can omit message
-        else:
-            data['message'] = None
-        if data['message'] is None:
+        message = None
+        if 'header_primary_text' in data: # indicates "member for <x> months" item with optional message
+            message = self.__parse_message_runs(data.pop('header_primary_text'))
+            if 'header_subtext' in data: # membership level name
+                message = f"{message} ({self.__parse_message_runs(data.pop('header_subtext'))})"
+            if 'message' in data:
+                message = f"{message}: {self.__parse_message_runs(data['message'])}"
+        elif 'header_subtext' in data: # indicates "welcome to <x>!" or "upgraded membership to <x>!" item
+            message = self.__parse_message_runs(data.pop('header_subtext'))
+        elif 'sticker' in data: # indicates paid sticker item (with optional message?)
+            message = self.__parse_sticker(data.pop('sticker'))
+            if 'message' in data:
+                message = f"{message}: {self.__parse_message_runs(data['message'])}"
+        elif 'amount' in data: # indicates superchat item with optional message (also in sticker but handled above)
+            if 'message' in data:
+                message = self.__parse_message_runs(data['message'])
+            else:
+                message = '<<no message>>'
+        elif 'message' in data: # indicates normal chat item
+            message = self.__parse_message_runs(data['message'])
+        if message is None:
             self.logger.warning("could not extract message from item:\n{}", _debug_dump(item))
+        data['message'] = message
 
         timestamp = data.get('timestamp')
         if timestamp:
