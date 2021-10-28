@@ -424,7 +424,7 @@ class ChatReplayDownloader:
     def __parse_video_text(self, regex_key, html):
         m = self.__YT_HTML_REGEXES[regex_key].search(html)
         if not m:
-            self.logger.debug("video HTML:\n{}", html)
+            self.logger.debug("video HTML (failed parse):\n{}", html)
             raise ParsingError('Unable to parse video data. Please try again.')
         data, _ = self.__json_decoder.raw_decode(m.group(1))
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
@@ -437,40 +437,48 @@ class ChatReplayDownloader:
         url = self.__YT_WATCH_TEMPLATE.format(video_id)
         html = self.__session_get(url).text
 
-        ytInitialPlayerResponse = self.__parse_video_text('ytInitialPlayerResponse', html)
-        config = {
-            **self.__extract_video_details(ytInitialPlayerResponse),
-            **self.__extract_playability_info(ytInitialPlayerResponse),
-            **self.__extract_video_microformat(ytInitialPlayerResponse), # note: data currently unused
-            **self.__extract_heartbeat_params(ytInitialPlayerResponse),
-        }
-
-        ytInitialData = self.__parse_video_text('ytInitialData', html)
-        contents = ytInitialData.get('contents')
-        if(not contents):
-            raise VideoUnavailable('Video is unavailable (may be private).')
-        contents = contents.get('twoColumnWatchNextResults', {}).get('conversationBar', {})
         try:
-            container = contents['liveChatRenderer']
-            viewselector_submenuitems = container['header']['liveChatHeaderRenderer'][
-                'viewSelector']['sortFilterSubMenuRenderer']['subMenuItems']
-            continuation_by_title_map = {
-                x['title']: x['continuation']['reloadContinuationData']['continuation']
-                for x in viewselector_submenuitems
+            ytInitialPlayerResponse = self.__parse_video_text('ytInitialPlayerResponse', html)
+            config = {
+                **self.__extract_video_details(ytInitialPlayerResponse),
+                **self.__extract_playability_info(ytInitialPlayerResponse),
+                **self.__extract_video_microformat(ytInitialPlayerResponse), # note: data currently unused
+                **self.__extract_heartbeat_params(ytInitialPlayerResponse),
             }
-            if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
-                self.logger.debug("continuation_by_title_map:\n{}", _debug_dump(continuation_by_title_map))
-        except LookupError:
-            error_message = 'Video does not have a chat replay.'
-            try:
-                error_message = self.__parse_message_runs(
-                    contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text'])
-            except LookupError:
-                pass
-            config['no_chat_error'] = error_message
-            continuation_by_title_map = {}
 
-        return config, continuation_by_title_map
+            ytInitialData = self.__parse_video_text('ytInitialData', html)
+            contents = ytInitialData.get('contents')
+            if(not contents):
+                raise VideoUnavailable('Video is unavailable (may be private).')
+            contents = contents.get('twoColumnWatchNextResults', {}).get('conversationBar', {})
+            try:
+                container = contents['liveChatRenderer']
+                viewselector_submenuitems = container['header']['liveChatHeaderRenderer'][
+                    'viewSelector']['sortFilterSubMenuRenderer']['subMenuItems']
+                continuation_by_title_map = {
+                    x['title']: x['continuation']['reloadContinuationData']['continuation']
+                    for x in viewselector_submenuitems
+                }
+                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
+                    self.logger.debug("continuation_by_title_map:\n{}", _debug_dump(continuation_by_title_map))
+            except LookupError:
+                error_message = 'Video does not have a chat replay.'
+                try:
+                    error_message = self.__parse_message_runs(
+                        contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text'])
+                except LookupError:
+                    pass
+                config['no_chat_error'] = error_message
+                continuation_by_title_map = {}
+
+            self.logger.trace("video HTML (succeeded parse):\n{}", html)
+            return config, continuation_by_title_map
+        except ParsingError:
+            if "window.ERROR_PAGE" in html:
+                self.logger.info('HTML error page encountered, likely due to stream becoming members-only - retrying')
+                return self.__get_initial_youtube_info(video_id)
+            else:
+                raise
 
     def __get_initial_continuation_info(self, config, continuation, is_live):
         """Get continuation info via non-API continuation page for a YouTube video. Used to get the first continuation and get config."""
@@ -636,8 +644,17 @@ class ChatReplayDownloader:
         # and https://github.com/pytube/pytube/blob/master/pytube/extract.py
         url = self.__YT_WATCH_TEMPLATE.format(video_id)
         html = self.__session_get(url).text
-        ytInitialPlayerResponse = self.__parse_video_text('ytInitialPlayerResponse', html)
-        return self.__extract_playability_info(ytInitialPlayerResponse)
+        try:
+            ytInitialPlayerResponse = self.__parse_video_text('ytInitialPlayerResponse', html)
+            info = self.__extract_playability_info(ytInitialPlayerResponse)
+            self.logger.trace("video HTML (succeeded parse):\n{}", html)
+            return info
+        except ParsingError:
+            if "window.ERROR_PAGE" in html:
+                self.logger.info('HTML error page encountered, likely due to stream becoming members-only - retrying')
+                return self.__get_fallback_playability_info(video_id)
+            else:
+                raise
 
     def __get_youtube_json(self, url, payload):
         """Get JSON for a YouTube API url"""
