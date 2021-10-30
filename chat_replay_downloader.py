@@ -476,7 +476,7 @@ class ChatReplayDownloader:
             return config, continuation_by_title_map
         except ParsingError:
             if "window.ERROR_PAGE" in html:
-                self.logger.info('HTML error page encountered, likely due to stream becoming members-only - retrying')
+                self.logger.info("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
                 return self.__get_initial_youtube_info(video_id)
             else:
                 raise
@@ -509,11 +509,19 @@ class ChatReplayDownloader:
         self.logger.debug("get_fallback_continuation_info: continuation={}, is_live={}", continuation, is_live)
         url = self.__YT_INIT_CONTINUATION_TEMPLATE.format('live_chat' if is_live else 'live_chat_replay', continuation)
         html = self.__session_get(url).text
-        ytInitialData = self.__parse_video_text('ytInitialData', html)
-        info = self.__extract_continuation_info(ytInitialData)
-        if info is None:
-            raise NoContinuation
-        return info
+        try:
+            ytInitialData = self.__parse_video_text('ytInitialData', html)
+            info = self.__extract_continuation_info(ytInitialData)
+            self.logger.trace("video HTML (succeeded parse):\n{}", html)
+            if info is None:
+                raise NoContinuation
+            return info
+        except ParsingError:
+            if "window.ERROR_PAGE" in html:
+                self.logger.info("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
+                return self.__get_fallback_continuation_info(continuation, is_live)
+            else:
+                raise
 
     def __extract_video_details(self, info):
         """Extract video details (including title and whether upcoming) from ytInitialPlayerResponse JSON."""
@@ -652,7 +660,7 @@ class ChatReplayDownloader:
             return info
         except ParsingError:
             if "window.ERROR_PAGE" in html:
-                self.logger.info('HTML error page encountered, likely due to stream becoming members-only - retrying')
+                self.logger.info("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
                 return self.__get_fallback_playability_info(video_id)
             else:
                 raise
