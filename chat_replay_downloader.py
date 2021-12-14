@@ -117,7 +117,7 @@ class ChatReplayDownloader:
         lenient=True, format='[%(levelname)s][%(asctime)s]%(context)s %(message)s', datefmt=DATETIME_FORMAT)
 
     __HEADERS = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.72 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.93 Safari/537.36,gzip(gfe)',
         'Accept-Language': 'en-US, en'
     }
 
@@ -518,8 +518,8 @@ class ChatReplayDownloader:
             return info
         except ParsingError:
             if "window.ERROR_PAGE" in html:
-                self.logger.info("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
-                return self.__get_fallback_continuation_info(continuation, is_live)
+                # TODO: check watch page for video availability; for now, just assume no more continuations
+                raise NoContinuation
             else:
                 raise
 
@@ -998,7 +998,7 @@ class ChatReplayDownloader:
                                     nochat_abort_cond_state_updater, state=abort_cond_state)
                             abort_cond_checker.check()
 
-                        retry_wait_secs = random.randint(45, 60) # jitter
+                        retry_wait_secs = random.randint(60, 180) # jitter
                         if self.logger.isEnabledFor(logging.INFO):
                             self.logger.info("Upcoming {} Retrying in {} secs (attempt {})",
                                 _trans_first_char(error_message, str.lower), retry_wait_secs, attempt_ct)
