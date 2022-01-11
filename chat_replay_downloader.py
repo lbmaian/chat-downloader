@@ -468,7 +468,10 @@ class ChatReplayDownloader:
                     error_message = self.__parse_message_runs(
                         contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text'])
                 except LookupError:
-                    pass
+                    try:
+                        error_message = ytInitialPlayerResponse['errorScreen']['playerErrorMessageRenderer']['subreason']['simpleText']
+                    except LookupError:
+                        pass
                 config['no_chat_error'] = error_message
                 continuation_by_title_map = {}
 
@@ -698,11 +701,12 @@ class ChatReplayDownloader:
 
         for key in important_item_info:
             new_key = self.__IMPORTANT_KEYS_AND_REMAPPINGS[key]
-            data[new_key] = data.pop(key)
+            value = data.pop(key)
 
             # get simpleText if it exists
-            if(type(data[new_key]) is dict and 'simpleText' in data[new_key]):
-                data[new_key] = data[new_key]['simpleText']
+            if(type(value) is dict):
+                value = value.get('simpleText', value)
+            data[new_key] = value
 
         author_badges = item_info.get('authorBadges')
         if author_badges:
