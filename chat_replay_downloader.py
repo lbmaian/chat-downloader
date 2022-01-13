@@ -179,7 +179,7 @@ class ChatReplayDownloader:
         'backgroundColor': 'body_color', # in liveChatPaidStickerRenderer
     }
 
-    __MAX_RETRIES = 10
+    __MAX_RETRIES = 60 # with below retry settings, should handle about half an hour worth of retries
 
     def __init__(self, cookies=None):
         """Initialise a new session for making requests."""
