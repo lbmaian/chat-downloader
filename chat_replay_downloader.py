@@ -469,7 +469,7 @@ class ChatReplayDownloader:
                         contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text'])
                 except LookupError:
                     try:
-                        error_message = ytInitialPlayerResponse['errorScreen']['playerErrorMessageRenderer']['subreason']['simpleText']
+                        error_message = ytInitialPlayerResponse['playabilityStatus']['errorScreen']['playerErrorMessageRenderer']['subreason']['simpleText']
                     except LookupError:
                         pass
                 config['no_chat_error'] = error_message
