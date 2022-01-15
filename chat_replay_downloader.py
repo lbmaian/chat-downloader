@@ -1543,7 +1543,7 @@ def main(args):
                 register_handler(abort_signal, finalize_output)
 
     try:
-        chat_downloader = ChatReplayDownloader(cookies=args.cookies)
+        chat_downloader = ChatReplayDownloader(cookies=args.cookies or None)
 
         def print_item(item):
             chat_downloader.print_item(item)
