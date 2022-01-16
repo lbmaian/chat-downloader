@@ -456,30 +456,24 @@ class ChatReplayDownloader:
                 container = contents['liveChatRenderer']
                 viewselector_submenuitems = container['header']['liveChatHeaderRenderer'][
                     'viewSelector']['sortFilterSubMenuRenderer']['subMenuItems']
-                continuation_by_title_map = {
+                config['continuation_by_title_map'] = {
                     x['title']: x['continuation']['reloadContinuationData']['continuation']
                     for x in viewselector_submenuitems
                 }
-                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
-                    self.logger.debug("continuation_by_title_map:\n{}", _debug_dump(continuation_by_title_map))
             except LookupError:
-                error_message = 'Video does not have a chat replay.'
                 try:
                     error_message = self.__parse_message_runs(
                         contents['conversationBarRenderer']['availabilityMessage']['messageRenderer']['text'])
+                    config['playability_reason'] = _append_reason(error_message, config['playability_reason'])
                 except LookupError:
-                    try:
-                        error_message = ytInitialPlayerResponse['playabilityStatus']['errorScreen']['playerErrorMessageRenderer']['subreason']['simpleText']
-                    except LookupError:
-                        pass
-                config['no_chat_error'] = error_message
-                continuation_by_title_map = {}
+                    pass
+                config['continuation_by_title_map'] = {}
 
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
-            return config, continuation_by_title_map
+            return config
         except ParsingError:
-            if "window.ERROR_PAGE" in html:
-                self.logger.info("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
+            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
+                self.logger.debug("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
                 return self.__get_initial_youtube_info(video_id)
             else:
                 raise
@@ -506,8 +500,12 @@ class ChatReplayDownloader:
             raise NoContinuation
         return info
 
+    @staticmethod
+    def __is_ever_playable(playability_status):
+        return playability_status == 'OK' or playability_status == 'LIVE_STREAM_OFFLINE'
+
     # see "fall back" comment in __get_continuation_info
-    def __get_fallback_continuation_info(self, continuation, is_live):
+    def __get_fallback_continuation_info(self, config, continuation, is_live):
         """Get continuation info via non-API continuation page for a YouTube video. Used as a fallback."""
         self.logger.debug("get_fallback_continuation_info: continuation={}, is_live={}", continuation, is_live)
         url = self.__YT_INIT_CONTINUATION_TEMPLATE.format('live_chat' if is_live else 'live_chat_replay', continuation)
@@ -517,12 +515,23 @@ class ChatReplayDownloader:
             info = self.__extract_continuation_info(ytInitialData)
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             if info is None:
+                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
+                    self.logger.debug("playabilityStatus:\n{}", _debug_dump(self.__get_fallback_playability_info(config)))
                 raise NoContinuation
             return info
         except ParsingError:
-            if "window.ERROR_PAGE" in html:
-                # TODO: check watch page for video availability; for now, just assume no more continuations
-                raise NoContinuation
+            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
+                self.logger.debug("HTML error page encountered, likely due to stream changing members-only or private status...")
+                playability_info = self.__get_fallback_playability_info(config)
+                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
+                    self.logger.debug("playabilityStatus:\n{}", _debug_dump(playability_info))
+                playability_status = playability_info['playability_status']
+                if self.__is_ever_playable(playability_status):
+                    self.logger.debug("...playability status is {} - retrying", playability_status)
+                    return self.__get_fallback_continuation_info(config, continuation, is_live)
+                else:
+                    self.logger.debug("...playability status is {} - aborting", playability_status)
+                    raise NoContinuation
             else:
                 raise
 
@@ -530,6 +539,7 @@ class ChatReplayDownloader:
         """Extract video details (including title and whether upcoming) from ytInitialPlayerResponse JSON."""
         videoDetails = info.get('videoDetails', {})
         video_details = {
+            'video_id': videoDetails.get('videoId'),
             'title': videoDetails.get('title'),
             'is_live': videoDetails.get('isLive', False),
             'is_upcoming': videoDetails.get('isUpcoming', False),
@@ -546,9 +556,17 @@ class ChatReplayDownloader:
             scheduled_start_time = datetime.fromtimestamp(timestamp)
         except LookupError:
             scheduled_start_time = None
+        playability_reason = playabilityStatus.get('reason')
+        try:
+            playability_reason = _append_reason(playability_reason,
+                playabilityStatus['errorScreen']['playerErrorMessageRenderer']['subreason']['simpleText'])
+        except LookupError:
+            playability_reason = _ensure_sentence(playability_reason)
+        playability_status = playabilityStatus.get('status')
         playability_info = {
-            'playability_status': playabilityStatus.get('status'),
+            'playability_status': playability_status,
             'scheduled_start_time': scheduled_start_time,
+            'playability_reason': playability_reason,
         }
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
             self.logger.trace("playability_info:\n{}", _debug_dump(playability_info))
@@ -614,6 +632,8 @@ class ChatReplayDownloader:
                     'falling back to always using non-API continuation endpoint')
                 # continue to return None
             else:
+                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
+                    self.logger.debug("playabilityStatus:\n{}", _debug_dump(self.__get_playability_info(config)))
                 raise NoContinuation
         return info
 
@@ -634,8 +654,9 @@ class ChatReplayDownloader:
         self.logger.trace("responseContext.mainAppWebResponseContext.loggedOut: {}", logged_out)
         return True if logged_out is None else logged_out # if loggedOut is somehow missing, assume it's true
 
-    def __get_playability_info(self, config, video_id):
+    def __get_playability_info(self, config):
         """Get playability info (including scheduled start date) via API heartbeat for a YouTube video."""
+        video_id = config['video_id']
         self.logger.debug("get_playability_info: video_id={}", video_id)
         url = self.__YT_HEARTBEAT_TEMPLATE.format(config['api_version'], config['api_key'])
         sequence_number = config.get('heartbeat_sequence_number', 0) # stored in config for convenience
@@ -648,8 +669,9 @@ class ChatReplayDownloader:
         }
         return self.__extract_playability_info(self.__get_youtube_json(url, payload))
 
-    def __get_fallback_playability_info(self, video_id):
+    def __get_fallback_playability_info(self, config):
         """Get playability info (including scheduled start date) from watch page for a YouTube video. Used as a fallback."""
+        video_id = config['video_id']
         self.logger.debug("get_fallback_playability_info: video_id={}", video_id)
         # TODO: use https://www.youtube.com/get_video_info endpoint
         # see https://github.com/Tyrrrz/YoutubeExplode/blob/master/YoutubeExplode/Bridge/YoutubeController.cs
@@ -662,9 +684,9 @@ class ChatReplayDownloader:
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             return info
         except ParsingError:
-            if "window.ERROR_PAGE" in html:
-                self.logger.info("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
-                return self.__get_fallback_playability_info(video_id)
+            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
+                self.logger.debug("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
+                return self.__get_fallback_playability_info(config)
             else:
                 raise
 
@@ -978,7 +1000,8 @@ class ChatReplayDownloader:
             attempt_ct = 0
             while True:
                 attempt_ct += 1
-                config, continuation_by_title_map = self.__get_initial_youtube_info(video_id)
+                config = self.__get_initial_youtube_info(video_id)
+                continuation_by_title_map = config['continuation_by_title_map']
 
                 if(chat_replay_field in continuation_by_title_map):
                     is_live = False
@@ -988,8 +1011,8 @@ class ChatReplayDownloader:
                     continuation_title = chat_live_field
 
                 if continuation_title is None:
-                    error_message = config.get('no_chat_error', 'Video does not have a chat replay.')
-                    if config['is_upcoming'] or config['is_live']:
+                    playability_reason = config['playability_reason'] or 'Video does not have a chat replay.'
+                    if (config['is_upcoming'] or config['is_live']) and self.__is_ever_playable(config['playability_status']):
                         if abort_cond_groups:
                             if abort_cond_checker is None:
                                 def nochat_abort_cond_state_updater(state):
@@ -1004,13 +1027,14 @@ class ChatReplayDownloader:
 
                         retry_wait_secs = random.randint(60, 180) # jitter
                         if self.logger.isEnabledFor(logging.INFO):
-                            self.logger.info("Upcoming {} Retrying in {} secs (attempt {})",
-                                _trans_first_char(error_message, str.lower), retry_wait_secs, attempt_ct)
+                            self.logger.info("{} Retrying in {} secs (attempt {})",
+                                playability_reason, retry_wait_secs, attempt_ct)
                         time.sleep(retry_wait_secs)
                     else:
-                        raise NoChatReplay(error_message)
+                        raise NoChatReplay(playability_reason)
                 else:
                     break
+
             continuation = continuation_by_title_map[continuation_title]
             # TODO: get local title from microformat, poll request https://www.youtube.com/youtubei/v1/updated_metadata for local title updates
             # and https://www.youtube.com/youtubei/v1/updated_metadata for page title updates,
@@ -1040,9 +1064,9 @@ class ChatReplayDownloader:
                                 if now_timestamp > poll_timestamp + config.get('heartbeat_interval_secs', 60.0):
                                     state.trace['poll_timestamp'] = now_timestamp
                                     if use_non_api_fallback:
-                                        playability_info = self.__get_fallback_playability_info(video_id)
+                                        playability_info = self.__get_fallback_playability_info(config)
                                     else:
-                                        playability_info = self.__get_playability_info(config, video_id)
+                                        playability_info = self.__get_playability_info(config)
                                     state.info.update(playability_info)
                         abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups,
                             abort_cond_state_updater, state=abort_cond_state)
@@ -1053,7 +1077,7 @@ class ChatReplayDownloader:
                         # note: first_time is toggled off at end of this iteration in case first_time is used elsewhere
                         info = self.__get_initial_continuation_info(config, continuation, is_live) # note: updates config
                     elif use_non_api_fallback:
-                        info = self.__get_fallback_continuation_info(continuation, is_live)
+                        info = self.__get_fallback_continuation_info(config, continuation, is_live)
                     else:
                         info = self.__get_continuation_info(config, continuation, is_live, player_offset_ms)
                         # if above returns None yet doesn't throw NoContinuation, that means fallback to always use fallback continuation endpoint
@@ -1250,6 +1274,20 @@ def _debug_dump(obj, *, ensure_ascii=False, indent=4, default=str, **kwargs):
 
 def _trans_first_char(text, func):
     return func(text[:1]) + text[1:]
+
+def _ensure_sentence(msg):
+    if msg and not msg.endswith('.'):
+        return msg + '.'
+    else:
+        return msg
+
+def _append_reason(reason, subreason):
+    if not subreason:
+        return _ensure_sentence(reason)
+    elif not reason:
+        return _ensure_sentence(subreason)
+    else:
+        return f"{_ensure_sentence(reason)[:-1]}: {_ensure_sentence(subreason)}"
 
 # recursively filter out None values from iterables
 # note: does not handle cyclic structures
