@@ -42,6 +42,11 @@ class ParsingError(Exception):
     pass
 
 
+class RetryableParsingError(ParsingError):
+    """Raised when video data cannot be parsed for a retryable reason."""
+    pass
+
+
 class VideoUnavailable(Exception):
     """Raised when video is unavailable (e.g. if video is private)."""
     pass
@@ -225,6 +230,7 @@ class ChatReplayDownloader:
                 else:
                     response = self.session.post(url, data=post_payload, timeout=10)
                     break
+            # TODO: catch response status 403/404 and raise VideoUnavailable/VideoNotFound
             # Workaround for https://stackoverflow.com/questions/67614642/python-requests-urrllib3-retry-on-read-timeout-after-200-header-received
             except requests.exceptions.ConnectionError as e:
                 if str(e).endswith('Read timed out.') and connection_read_timeout_try_ct <= self.__MAX_RETRIES:
@@ -426,7 +432,10 @@ class ChatReplayDownloader:
         m = self.__YT_HTML_REGEXES[regex_key].search(html)
         if not m:
             self.logger.debug("video HTML (failed parse):\n{}", html)
-            raise ParsingError('Unable to parse video data. Please try again.')
+            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
+                raise RetryableParsingError("HTML error page encountered, potentially due to stream changing members-only or private status")
+            else:
+                raise ParsingError("Unable to parse video data.")
         data, _ = self.__json_decoder.raw_decode(m.group(1))
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
             self.logger.trace("{}:\n{}", regex_key, _debug_dump(data))
@@ -471,12 +480,9 @@ class ChatReplayDownloader:
 
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             return config
-        except ParsingError:
-            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
-                self.logger.debug("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
-                return self.__get_initial_youtube_info(video_id)
-            else:
-                raise
+        except RetryableParsingError as error:
+            self.logger.debug("{} - retrying", error)
+            return self.__get_initial_youtube_info(video_id)
 
     def __get_initial_continuation_info(self, config, continuation, is_live):
         """Get continuation info via non-API continuation page for a YouTube video. Used to get the first continuation and get config."""
@@ -515,25 +521,18 @@ class ChatReplayDownloader:
             info = self.__extract_continuation_info(ytInitialData)
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             if info is None:
-                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
-                    self.logger.debug("playabilityStatus:\n{}", _debug_dump(self.__get_fallback_playability_info(config)))
+                if self.logger.isEnabledFor(logging.DEBUG): # guard since this is expensive
+                    self.__get_fallback_playability_info(config, logging.DEBUG)
                 raise NoContinuation
             return info
-        except ParsingError:
-            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
-                self.logger.debug("HTML error page encountered, likely due to stream changing members-only or private status...")
-                playability_info = self.__get_fallback_playability_info(config)
-                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
-                    self.logger.debug("playabilityStatus:\n{}", _debug_dump(playability_info))
-                playability_status = playability_info['playability_status']
-                if self.__is_ever_playable(playability_status):
-                    self.logger.debug("...playability status is {} - retrying", playability_status)
-                    return self.__get_fallback_continuation_info(config, continuation, is_live)
-                else:
-                    self.logger.debug("...playability status is {} - aborting", playability_status)
-                    raise NoContinuation
+        except RetryableParsingError as error:
+            self.logger.debug("{}...", error)
+            playability_info = self.__get_fallback_playability_info(config, logging.DEBUG)
+            if self.__is_ever_playable(playability_info['playability_status']):
+                self.logger.debug("...retrying")
+                return self.__get_fallback_continuation_info(config, continuation, is_live)
             else:
-                raise
+                raise NoContinuation
 
     def __extract_video_details(self, info):
         """Extract video details (including title and whether upcoming) from ytInitialPlayerResponse JSON."""
@@ -548,7 +547,7 @@ class ChatReplayDownloader:
             self.logger.trace("video_details:\n{}", _debug_dump(video_details))
         return video_details
 
-    def __extract_playability_info(self, info):
+    def __extract_playability_info(self, info, log_level=logging.TRACE):
         """Extract playability status info (including scheduled start time) from either API heartbeat JSON or ytInitialPlayerResponse JSON."""
         playabilityStatus = info.get('playabilityStatus', {})
         try:
@@ -568,8 +567,8 @@ class ChatReplayDownloader:
             'scheduled_start_time': scheduled_start_time,
             'playability_reason': playability_reason,
         }
-        if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
-            self.logger.trace("playability_info:\n{}", _debug_dump(playability_info))
+        if self.logger.isEnabledFor(log_level): # guard since json.dumps is expensive
+            self.logger.log(log_level, "playability_info:\n{}", _debug_dump(playability_info))
         return playability_info
 
     def __extract_video_microformat(self, info):
@@ -632,8 +631,8 @@ class ChatReplayDownloader:
                     'falling back to always using non-API continuation endpoint')
                 # continue to return None
             else:
-                if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
-                    self.logger.debug("playabilityStatus:\n{}", _debug_dump(self.__get_playability_info(config)))
+                if self.logger.isEnabledFor(logging.DEBUG): # guard since this is expensive
+                    self.__get_playability_info(config, logging.DEBUG)
                 raise NoContinuation
         return info
 
@@ -654,7 +653,7 @@ class ChatReplayDownloader:
         self.logger.trace("responseContext.mainAppWebResponseContext.loggedOut: {}", logged_out)
         return True if logged_out is None else logged_out # if loggedOut is somehow missing, assume it's true
 
-    def __get_playability_info(self, config):
+    def __get_playability_info(self, config, log_level=logging.TRACE):
         """Get playability info (including scheduled start date) via API heartbeat for a YouTube video."""
         video_id = config['video_id']
         self.logger.debug("get_playability_info: video_id={}", video_id)
@@ -667,9 +666,9 @@ class ChatReplayDownloader:
             'videoId': video_id,
             'sequenceNumber': sequence_number,
         }
-        return self.__extract_playability_info(self.__get_youtube_json(url, payload))
+        return self.__extract_playability_info(self.__get_youtube_json(url, payload), log_level)
 
-    def __get_fallback_playability_info(self, config):
+    def __get_fallback_playability_info(self, config, log_level=logging.TRACE):
         """Get playability info (including scheduled start date) from watch page for a YouTube video. Used as a fallback."""
         video_id = config['video_id']
         self.logger.debug("get_fallback_playability_info: video_id={}", video_id)
@@ -680,27 +679,27 @@ class ChatReplayDownloader:
         html = self.__session_get(url).text
         try:
             ytInitialPlayerResponse = self.__parse_video_text('ytInitialPlayerResponse', html)
-            info = self.__extract_playability_info(ytInitialPlayerResponse)
+            info = self.__extract_playability_info(ytInitialPlayerResponse, log_level)
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             return info
-        except ParsingError:
-            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
-                self.logger.debug("HTML error page encountered, likely due to stream changing members-only or private status - retrying")
-                return self.__get_fallback_playability_info(config)
-            else:
-                raise
+        except RetryableParsingError as error:
+            self.logger.debug("{} - retrying", error)
+            return self.__get_fallback_playability_info(config, log_level)
 
     def __get_youtube_json(self, url, payload):
         """Get JSON for a YouTube API url"""
         data = self.__session_get_json(url, payload)
         error = data.get('error')
         if error:
+            if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
+                self.logger.debug("error entry in JSON:\n{}", _debug_dump(data)) # too verbose
             # Error code 403 'The caller does not have permission' error likely means the stream was privated immediately while the chat is still active.
             error_code = error.get('code')
             if error_code == 403:
-                raise VideoUnavailable
+                raise VideoUnavailable # TODO: error.get('message')
             elif error_code == 404:
-                raise VideoNotFound
+                raise VideoNotFound # TODO: error.get('message')
+            # TODO: elif error_code // 100 == 5: # retry on server error
             else:
                 raise ParsingError("JSON response to {!r} is error:\n{}".format(url, _debug_dump(data)))
         return data
@@ -1087,10 +1086,10 @@ class ChatReplayDownloader:
                 except NoContinuation:
                     print('No continuation found, stream may have ended.')
                     break
-                except VideoUnavailable:
+                except VideoUnavailable: # TODO: use error message
                     print('Video not unavailable, stream may have been privated while live chat was still active.')
                     break
-                except VideoNotFound:
+                except VideoNotFound: # TODO: use error message
                     print('Video not found, stream may have been deleted while live chat was still active.')
                     break
 
