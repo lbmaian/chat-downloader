@@ -432,7 +432,7 @@ class ChatReplayDownloader:
         m = self.__YT_HTML_REGEXES[regex_key].search(html)
         if not m:
             self.logger.debug("video HTML (failed parse):\n{}", html)
-            if "window.ERROR_PAGE" in html or not html.endsWith('</html>'):
+            if "window.ERROR_PAGE" in html or not html.endswith('</html>'):
                 raise RetryableParsingError("HTML error page encountered, potentially due to stream changing members-only or private status")
             else:
                 raise ParsingError("Unable to parse video data.")
