@@ -672,9 +672,6 @@ class ChatReplayDownloader:
         """Get playability info (including scheduled start date) from watch page for a YouTube video. Used as a fallback."""
         video_id = config['video_id']
         self.logger.debug("get_fallback_playability_info: video_id={}", video_id)
-        # TODO: use https://www.youtube.com/get_video_info endpoint
-        # see https://github.com/Tyrrrz/YoutubeExplode/blob/master/YoutubeExplode/Bridge/YoutubeController.cs
-        # and https://github.com/pytube/pytube/blob/master/pytube/extract.py
         url = self.__YT_WATCH_TEMPLATE.format(video_id)
         html = self.__session_get(url).text
         try:
@@ -1037,7 +1034,7 @@ class ChatReplayDownloader:
             continuation = continuation_by_title_map[continuation_title]
             # TODO: get local title from microformat, poll request https://www.youtube.com/youtubei/v1/updated_metadata for local title updates
             # and https://www.youtube.com/youtubei/v1/updated_metadata for page title updates,
-            # fallback to https://www.youtube.com/get_video_info for both and scheduled start time updates
+            # fallback to https://www.youtube.com/watch for both and scheduled start time updates
             if self.logger.isEnabledFor(logging.INFO):
                 self.logger.info("Downloading {} for video: {}", _trans_first_char(continuation_title, str.lower), config['title'])
 
