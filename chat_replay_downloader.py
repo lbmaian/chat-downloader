@@ -424,7 +424,7 @@ class ChatReplayDownloader:
 
     __YT_HTML_REGEXES = {
         'ytcfg': re.compile(r'\bytcfg\s*\.\s*set\(\s*({.*})\s*\)\s*;'),
-        'ytInitialPlayerResponse': re.compile(r'\bytInitialPlayerResponse\s*=\s*({.+?})\s*;'),
+        'ytInitialPlayerResponse': re.compile(r'\bytInitialPlayerResponse\s*=\s*({.+?)</script>'),
         'ytInitialData': re.compile(r'(?:\bwindow\s*\[\s*["\']ytInitialData["\']\s*\]|\bytInitialData)\s*=\s*(\{.+\})\s*;'),
     }
     __json_decoder = json.JSONDecoder() # for more lenient raw_decode usage
@@ -436,7 +436,11 @@ class ChatReplayDownloader:
                 raise RetryableParsingError("HTML error page encountered, potentially due to stream changing members-only or private status")
             else:
                 raise ParsingError("Unable to parse video data.")
-        data, _ = self.__json_decoder.raw_decode(m.group(1))
+        try:
+            data, _ = self.__json_decoder.raw_decode(m.group(1))
+        except json.decoder.JSONDecodeError as error:
+            self.logger.debug("video HTML (failed parse):\n{}", html)
+            raise ParsingError("Unable to parse video data.") from error
         if self.logger.isEnabledFor(logging.TRACE): # guard since json.dumps is expensive
             self.logger.trace("{}:\n{}", regex_key, _debug_dump(data))
         return data
