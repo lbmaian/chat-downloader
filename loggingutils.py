@@ -1,15 +1,15 @@
-import logging
-import string
-import time
-from datetime import datetime
+import atexit
 import collections
 import collections.abc
-import sys
-import os
 import contextlib
-import traceback
 import inspect
-import atexit
+import logging
+import os
+import string
+import sys
+import time
+import traceback
+from datetime import datetime
 
 class loggerProperty:
     """

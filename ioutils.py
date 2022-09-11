@@ -1,5 +1,5 @@
-from datetime import datetime
 import io
+from datetime import datetime
 
 class TimestampPrefixFileWrapper:
     """

@@ -1,28 +1,29 @@
 #!/usr/bin/env python3
+import argparse
+import collections.abc
+import csv
+import enum
+import json
+import logging
+import numbers
+import os
+import random
+import re
+import signal
+import sys
+import textwrap
+import time
+from datetime import datetime, timedelta
+from http.cookiejar import MozillaCookieJar
+from urllib import parse
+
+import emoji
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-import logging
-import loggingutils
-import ioutils
-import random
-import json
-from datetime import datetime, timedelta
-import re
-import argparse
-import csv
-import emoji
-import time
-import os
-import numbers
-import collections.abc
-from http.cookiejar import MozillaCookieJar
-import sys
-import signal
-from urllib import parse
-import enum
-import textwrap
 
+import ioutils
+import loggingutils
 
 logging.TRACE, logging.trace, logging.Logger.trace, logging.LoggerAdapter.trace = loggingutils.addLevelName(logging.DEBUG // 2, 'TRACE')
 
@@ -157,6 +158,9 @@ class ChatReplayDownloader:
             'liveChatTickerPaidStickerItemRenderer',
             'liveChatTickerPaidMessageItemRenderer',
             'liveChatTickerSponsorItemRenderer',
+            # gifted membership TODO
+            #'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
+            #'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
         ]
     }
 
@@ -713,7 +717,8 @@ class ChatReplayDownloader:
         item_info = item[index]
 
         # Never before seen index, may cause error (used for debugging)
-        if(index not in self.__TYPES_OF_KNOWN_MESSAGES):
+        unknown_message_type = index not in self.__TYPES_OF_KNOWN_MESSAGES
+        if unknown_message_type:
             self.logger.warning("unknown message type: {}", index)
 
         important_item_info = {key: value for key, value in item_info.items(
@@ -775,6 +780,8 @@ class ChatReplayDownloader:
             message = self.__parse_message_runs(data['message'])
         if message is None:
             self.logger.warning("could not extract message from item:\n{}", _debug_dump(item))
+        elif unknown_message_type:
+            self.logger.debug("extracted message from unknown message type:\n{}", _debug_dump(item))
         data['message'] = message
 
         timestamp = data.get('timestamp')
@@ -812,7 +819,11 @@ class ChatReplayDownloader:
                     f"(cannot have both {cond_name_dict[cond_name]!r} and {raw_cond!r})")
             cond_name_dict[cond_name] = raw_cond
 
-            if cond_name == 'changed_scheduled_start_time':
+            if cond_name == 'grace_period':
+                # TODO
+                pass
+
+            elif cond_name == 'changed_scheduled_start_time':
                 datetime_format = cond_arg
                 if datetime_format.startswith('+'):
                     datetime_format = datetime_format[1:]
@@ -1308,6 +1319,7 @@ def _prune_none_values(obj):
 # print full stack trace (rather than only up to the containing method)
 def _print_stacktrace(message=None, log=None):
     import traceback
+
     # using print by default rather than logger in case logging system somehow failed
     if log is None:
         log_prefix = f"[ERROR][{datetime.now():{ChatReplayDownloader.DATETIME_FORMAT}}]"
