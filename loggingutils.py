@@ -2,6 +2,7 @@ import atexit
 import collections
 import collections.abc
 import contextlib
+import io
 import inspect
 import logging
 import os
@@ -435,6 +436,31 @@ class DateFileHandler(FileHandler):
         return (rotate_timestamp, os.path.abspath(filename))
 
 
+class StringLogger(logging.Logger):
+    """
+    A standalone optionally named logger that emits logs to its own string buffer (backed by a StringIO instance),
+    which can be accessed via the `logger.value` property.
+    """
+
+    def __init__(self, name='', **kwargs):
+        super().__init__(name)
+        if 'format' not in kwargs: # message-only defaults if format isn't specified
+            match kwargs.get('style', '%'):
+                case '%':
+                    kwargs['format'] = '%(message)s'
+                case '{':
+                    kwargs['format'] = '{message}'
+                case '$':
+                    kwargs['format'] = '${message}'
+        self._stream = io.StringIO()
+        kwargs.setdefault('handlers', []).append(logging.StreamHandler(self._stream))
+        basicConfig(self, **kwargs)
+
+    @property
+    def value(self):
+        return self._stream.getvalue()
+
+
 def getLogger(name_or_logger=None):
     """
     If argument is a `logging.Logger`, returns as-is.
@@ -452,6 +478,7 @@ def getLogger(name_or_logger=None):
         if logger != name_or_logger: # avoid infinite loop if name_or_logger.logger refers to itself
             return getLogger(logger)
     return logging.getLogger(name_or_logger)
+
 
 def basicConfig(logger, **kwargs):
     """
