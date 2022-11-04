@@ -498,21 +498,25 @@ class ChatReplayDownloader:
         url = self.__YT_INIT_CONTINUATION_TEMPLATE.format('live_chat' if is_live else 'live_chat_replay', continuation)
         html = self.__session_get(url).text
 
-        ytcfg = self.__parse_video_text('ytcfg', html)
-        config.update({
-            'api_version': ytcfg['INNERTUBE_API_VERSION'],
-            'api_key': ytcfg['INNERTUBE_API_KEY'],
-            'context': ytcfg['INNERTUBE_CONTEXT'],
-        })
+        try:
+            ytcfg = self.__parse_video_text('ytcfg', html)
+            config.update({
+                'api_version': ytcfg['INNERTUBE_API_VERSION'],
+                'api_key': ytcfg['INNERTUBE_API_KEY'],
+                'context': ytcfg['INNERTUBE_CONTEXT'],
+            })
 
-        ytInitialData = self.__parse_video_text('ytInitialData', html)
-        info = self.__extract_continuation_info(ytInitialData)
-        config['logged_out'] = self.__extract_logged_out(ytInitialData)
-        if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
-            self.logger.debug("config:\n{}", _debug_dump(config))
-        if info is None:
-            raise NoContinuation
-        return info
+            ytInitialData = self.__parse_video_text('ytInitialData', html)
+            info = self.__extract_continuation_info(ytInitialData)
+            config['logged_out'] = self.__extract_logged_out(ytInitialData)
+            if self.logger.isEnabledFor(logging.DEBUG): # guard since json.dumps is expensive
+                self.logger.debug("config:\n{}", _debug_dump(config))
+            if info is None:
+                raise NoContinuation
+            return info
+        except RetryableParsingError as error:
+            self.logger.debug("{} - retrying", error)
+            return self.__get_initial_continuation_info(config, continuation, is_live)
 
     @staticmethod
     def __is_ever_playable(playability_status):
