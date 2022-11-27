@@ -977,16 +977,6 @@ class ChatReplayDownloader:
                 cond_results.append(cond_result)
             return ' AND '.join(cond_results) or None
 
-    @loggingutils.contextdecorator
-    def _log_with_video_id(self, video_id, *args, **kwargs):
-        cls_logger = loggingutils.getLogger(self.__class__.logger) # ensure we get the Logger and not a LoggerAdapter
-        self.logger = loggingutils.FormatLoggerAdapter(cls_logger, style='{', extra={'context': f"[{kwargs.get('log_base_context', '')}{video_id}]"})
-        try:
-            yield
-        finally:
-            del self.logger
-
-    @_log_with_video_id
     def get_youtube_messages(self, video_id, start_time=None, end_time=None, message_type='messages', chat_type='live', callback=None, output_messages=None, **kwargs):
         """ Get chat messages for a YouTube video. """
         start_time = self.__ensure_seconds(start_time, None)
@@ -1202,7 +1192,6 @@ class ChatReplayDownloader:
             print('[Interrupted]', flush=True)
             return messages
 
-    @_log_with_video_id
     def get_twitch_messages(self, video_id, start_time=None, end_time=None, callback=None, output_messages=None, **kwargs):
         """ Get chat messages for a Twitch stream. """
         start_time = self.__ensure_seconds(start_time, 0)
@@ -1426,11 +1415,6 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                         choices=[name for level, name in logging._levelToName.items() if level != 0],
                         default=logging._levelToName[logging.WARNING],
                         help='log level, logged to standard output\n(default: %(default)r)')
-
-    parser.add_argument('--log_base_context', default='',
-                        help='lines logged to standard output are formatted as:\n'
-                             '"[<log_level>][<datetime>][<log_base_context><video_id>] <message>" (without the quotes)\n'
-                             "(default: %(default)r)")
 
     parser.add_argument('--newline', default='',
                         help='newline terminator as a Python-escaped string, e.g. \\r\\n for Windows-style CRLF\n'
