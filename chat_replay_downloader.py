@@ -1325,18 +1325,19 @@ def _print_stacktrace(message=None, log=None):
         log(message)
     log(''.join(stacklines).rstrip())
 
-# if adding as a subparser, pass `parser_type=subparsers.add_parser, cmd_name`
-# if adding to an existing parser or argument group, pass as parser parameter
-def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=None, parser_type=argparse.ArgumentParser, *parser_type_args, **parser_type_kwargs):
-    if not parser:
-        parser = parser_type(
-            *parser_type_args,
-            description='A simple tool used to retrieve YouTube/Twitch chat from past broadcasts/VODs. No authentication needed!',
-            formatter_class=argparse.RawTextHelpFormatter,
-            **parser_type_kwargs)
+def main(args):
+    logger = ChatReplayDownloader.logger
 
-    if add_positional_arguments:
-        parser.add_argument('url', help='YouTube/Twitch video URL')
+    abort_signals = {getattr(signal, signal_name): SignalAbortType.default for signal_name in DEFAULT_SIGNAL_ABORT_NAMES}
+
+    # preprocess any long-form '-' args into '--' args
+    args = ['-' + arg if len(arg) >= 3 and arg[0] == '-' and arg[1] != '-' else arg for arg in args]
+
+    parser = argparse.ArgumentParser(
+        description='A simple tool used to retrieve YouTube/Twitch chat from past broadcasts/VODs. No authentication needed!',
+        formatter_class=argparse.RawTextHelpFormatter)
+
+    parser.add_argument('url', help='YouTube/Twitch video URL')
 
     parser.add_argument('--start_time', '--from', default=None,
                         help='start time in seconds or hh:mm:ss [no effect on non-replay YouTube videos]\n(default: from the start)')
@@ -1359,11 +1360,8 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
     parser.add_argument('--save_cookies', default=None,
                         help='name of cookies file to save to, which can be the same value as --cookies\n(default: no cookies saved)')
 
-    if abort_signals is None:
-        abort_cond_type = str # assume this means we don't want to parse the abort conditions themselves
-    else:
-        abort_cond_type = lambda raw_cond_group: ChatReplayDownloader.parse_abort_condition_group(
-                                                    raw_cond_group, abort_signals, lambda msg: argparse.ArgumentError(abort_cond_action, msg))
+    abort_cond_type = lambda raw_cond_group: ChatReplayDownloader.parse_abort_condition_group(
+                                                raw_cond_group, abort_signals, lambda msg: argparse.ArgumentError(abort_cond_action, msg))
     abort_cond_action = parser.add_argument('--abort_condition', action='append', type=abort_cond_type,
                         help="a condition on which this application aborts (note: ctrl+c is such a condition by default)\n"
                              "Available conditions for upcoming streams:\n"
@@ -1420,17 +1418,6 @@ def gen_arg_parser(abort_signals=None, add_positional_arguments=True, parser=Non
                         help='newline terminator as a Python-escaped string, e.g. \\r\\n for Windows-style CRLF\n'
                              '(default: empty string, which means use the system default, e.g. CRLF on Windows)')
 
-    return parser
-
-def main(args):
-    logger = ChatReplayDownloader.logger
-
-    abort_signals = {getattr(signal, signal_name): SignalAbortType.default for signal_name in DEFAULT_SIGNAL_ABORT_NAMES}
-
-    # preprocess any long-form '-' args into '--' args
-    args = ['-' + arg if len(arg) >= 3 and arg[0] == '-' and arg[1] != '-' else arg for arg in args]
-
-    parser = gen_arg_parser(abort_signals)
     args = parser.parse_args(args)
 
     # to be passed to open/reconfigure function as newline argument
