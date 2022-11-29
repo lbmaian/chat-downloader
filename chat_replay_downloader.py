@@ -158,9 +158,9 @@ class ChatReplayDownloader:
             'liveChatTickerPaidStickerItemRenderer',
             'liveChatTickerPaidMessageItemRenderer',
             'liveChatTickerSponsorItemRenderer',
-            # gifted membership TODO
-            #'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
-            #'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
+            # gifted membership
+            'liveChatSponsorshipsGiftPurchaseAnnouncementRenderer',
+            'liveChatSponsorshipsGiftRedemptionAnnouncementRenderer',
         ]
     }
 
@@ -186,6 +186,7 @@ class ChatReplayDownloader:
         'headerSubtext': 'header_subtext', # in liveChatMembershipItemRenderer
         'sticker': 'sticker', # in liveChatPaidStickerRenderer
         'backgroundColor': 'body_color', # in liveChatPaidStickerRenderer
+        'primaryText': 'message', # in liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
     }
 
     __MAX_RETRIES = 60 # with below retry settings, should handle about half an hour worth of retries
@@ -724,6 +725,15 @@ class ChatReplayDownloader:
         unknown_message_type = index not in self.__TYPES_OF_KNOWN_MESSAGES
         if unknown_message_type:
             self.logger.warning("unknown message type: {}", index)
+
+        # heuristic for handling liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
+        # which has its info in item_info['header']['liveChatSponsorshipsHeaderRenderer']
+        header = item_info.get('header')
+        if header:
+            for header_key, header_value in header.items():
+                if header_key.endswith('Renderer'):
+                    for key, value in header_value.items():
+                        item_info.setdefault(key, value)
 
         important_item_info = {key: value for key, value in item_info.items(
         ) if key in self.__IMPORTANT_KEYS_AND_REMAPPINGS}
