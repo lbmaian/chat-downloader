@@ -189,6 +189,7 @@ class ChatReplayDownloader:
         'primaryText': 'message', # in liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
     }
 
+    __MAX_PARSING_ERROR_RETRIES = 5
     __MAX_RETRIES = 60 # with below retry settings, should handle about half an hour worth of retries
 
     def __init__(self, cookies=None):
@@ -450,7 +451,7 @@ class ChatReplayDownloader:
             self.logger.trace("{}:\n{}", regex_key, _debug_dump(data))
         return data
 
-    def __get_initial_youtube_info(self, video_id):
+    def __get_initial_youtube_info(self, video_id, try_ct=1):
         """ Get initial YouTube video information from its watch page. """
         self.logger.debug("get_initial_youtube_info: video_id={}", video_id)
         url = self.__YT_WATCH_TEMPLATE.format(video_id)
@@ -490,10 +491,12 @@ class ChatReplayDownloader:
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             return config
         except RetryableParsingError as error:
-            self.logger.debug("{} - retrying", error)
-            return self.__get_initial_youtube_info(video_id)
+            if try_ct >= self.__MAX_PARSING_ERROR_RETRIES:
+                raise ParsingError(f"Exhausted retries: {error}") from error
+            self.logger.info("{} - retrying (attempt {})", error, try_ct)
+            return self.__get_initial_youtube_info(video_id, try_ct + 1)
 
-    def __get_initial_continuation_info(self, config, continuation, is_live):
+    def __get_initial_continuation_info(self, config, continuation, is_live, try_ct=1):
         """Get continuation info via non-API continuation page for a YouTube video. Used to get the first continuation and get config."""
         self.logger.debug("get_initial_continuation_info: continuation={}, is_live={}", continuation, is_live)
         url = self.__YT_INIT_CONTINUATION_TEMPLATE.format('live_chat' if is_live else 'live_chat_replay', continuation)
@@ -516,15 +519,17 @@ class ChatReplayDownloader:
                 raise NoContinuation
             return info
         except RetryableParsingError as error:
-            self.logger.debug("{} - retrying", error)
-            return self.__get_initial_continuation_info(config, continuation, is_live)
+            if try_ct >= self.__MAX_PARSING_ERROR_RETRIES:
+                raise ParsingError(f"Exhausted retries: {error}") from error
+            self.logger.info("{} - retrying (attempt {})", error, try_ct)
+            return self.__get_initial_continuation_info(config, continuation, is_live, try_ct + 1)
 
     @staticmethod
     def __is_ever_playable(playability_status):
         return playability_status == 'OK' or playability_status == 'LIVE_STREAM_OFFLINE'
 
     # see "fall back" comment in __get_continuation_info
-    def __get_fallback_continuation_info(self, config, continuation, is_live):
+    def __get_fallback_continuation_info(self, config, continuation, is_live, try_ct=1):
         """Get continuation info via non-API continuation page for a YouTube video. Used as a fallback."""
         self.logger.debug("get_fallback_continuation_info: continuation={}, is_live={}", continuation, is_live)
         url = self.__YT_INIT_CONTINUATION_TEMPLATE.format('live_chat' if is_live else 'live_chat_replay', continuation)
@@ -542,8 +547,10 @@ class ChatReplayDownloader:
             self.logger.debug("{}...", error)
             playability_info = self.__get_fallback_playability_info(config, logging.DEBUG)
             if self.__is_ever_playable(playability_info['playability_status']):
-                self.logger.debug("...retrying")
-                return self.__get_fallback_continuation_info(config, continuation, is_live)
+                if try_ct >= self.__MAX_PARSING_ERROR_RETRIES:
+                    raise ParsingError(f"Exhausted retries: {error}") from error
+                self.logger.info("...retrying (attempt {})", try_ct)
+                return self.__get_fallback_continuation_info(config, continuation, is_live, try_ct + 1)
             else:
                 raise NoContinuation
 
@@ -681,7 +688,7 @@ class ChatReplayDownloader:
         }
         return self.__extract_playability_info(self.__get_youtube_json(url, payload), log_level)
 
-    def __get_fallback_playability_info(self, config, log_level=logging.TRACE):
+    def __get_fallback_playability_info(self, config, log_level=logging.TRACE, try_ct=1):
         """Get playability info (including scheduled start date) from watch page for a YouTube video. Used as a fallback."""
         video_id = config['video_id']
         self.logger.debug("get_fallback_playability_info: video_id={}", video_id)
@@ -693,8 +700,10 @@ class ChatReplayDownloader:
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
             return info
         except RetryableParsingError as error:
-            self.logger.debug("{} - retrying", error)
-            return self.__get_fallback_playability_info(config, log_level)
+            if try_ct >= self.__MAX_PARSING_ERROR_RETRIES:
+                raise ParsingError(f"Exhausted retries: {error}") from error
+            self.logger.info("{} - retrying (attempt {})", error, try_ct)
+            return self.__get_fallback_playability_info(config, log_level, try_ct + 1)
 
     def __get_youtube_json(self, url, payload):
         """Get JSON for a YouTube API url"""
