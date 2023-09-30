@@ -22,6 +22,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from cookies import CookieJarProvider, CookieError
+
 import ioutils
 import loggingutils
 
@@ -70,11 +72,6 @@ class TwitchError(Exception):
 
 class NoContinuation(Exception):
     """Raised when there are no more messages to retrieve (in a live stream)."""
-    pass
-
-
-class CookieError(Exception):
-    """Raised when an error occurs while loading a cookie file."""
     pass
 
 
@@ -192,7 +189,7 @@ class ChatReplayDownloader:
     __MAX_PARSING_ERROR_RETRIES = 5
     __MAX_RETRIES = 60 # with below retry settings, should handle about half an hour worth of retries
 
-    def __init__(self, cookies=None):
+    def __init__(self, args):
         """Initialise a new session for making requests."""
         self.session = requests.Session()
         self.session.headers = self.__HEADERS
@@ -207,15 +204,8 @@ class ChatReplayDownloader:
         self.session.mount('https://', http_adapter)
         self.session.mount('http://', http_adapter)
 
-        cj = MozillaCookieJar(cookies)
-        if cookies is not None:
-            # Only attempt to load if the cookie file exists.
-            if os.path.exists(cookies):
-                self.logger.debug("loading cookies from {!r}", cookies)
-                cj.load(ignore_discard=True, ignore_expires=True)
-            else:
-                raise CookieError(f"The file {cookies!r} could not be found.")
-        self.session.cookies = cj
+        self.cookiejarprovider = CookieJarProvider(args.cookies, args.cookies_browser, self.logger.logger)
+        self.session.cookies = self.cookiejarprovider.load()
 
     def save_cookies(self, cookies):
         self.logger.debug("saving cookies to {!r}", cookies)
@@ -529,30 +519,36 @@ class ChatReplayDownloader:
         return playability_status == 'OK' or playability_status == 'LIVE_STREAM_OFFLINE'
 
     # see "fall back" comment in __get_continuation_info
-    def __get_fallback_continuation_info(self, config, continuation, is_live, try_ct=1):
+    def __get_fallback_continuation_info(self, config, continuation, is_live, try_ct=1, cookie_refresh=False):
         """Get continuation info via non-API continuation page for a YouTube video. Used as a fallback."""
         self.logger.debug("get_fallback_continuation_info: continuation={}, is_live={}", continuation, is_live)
         url = self.__YT_INIT_CONTINUATION_TEMPLATE.format('live_chat' if is_live else 'live_chat_replay', continuation)
         html = self.__session_get(url).text
+        parsing_error = None
+        info = None
         try:
             ytInitialData = self.__parse_video_text('ytInitialData', html)
             info = self.__extract_continuation_info(ytInitialData)
             self.logger.trace("video HTML (succeeded parse):\n{}", html)
-            if info is None:
-                if self.logger.isEnabledFor(logging.DEBUG): # guard since this is expensive
-                    self.__get_fallback_playability_info(config, logging.DEBUG)
-                raise NoContinuation
-            return info
         except RetryableParsingError as error:
             self.logger.debug("{}...", error)
+            parsing_error = error
+        if info is None:
             playability_info = self.__get_fallback_playability_info(config, logging.DEBUG)
-            if self.__is_ever_playable(playability_info['playability_status']):
+            playability_status = playability_info['playability_status']
+            # Retry once after refetching cookies if status in UNPLAYABLE
+            if playability_status == 'UNPLAYABLE' and not cookie_refresh:
+                self.logger.info("...retrying once after reloading cookies")
+                self.session.cookies = self.cookiejarprovider.load()
+                return self.__get_fallback_continuation_info(config, continuation, is_live, try_ct, cookie_refresh=True)
+            elif parsing_error and self.__is_ever_playable(playability_status):
                 if try_ct >= self.__MAX_PARSING_ERROR_RETRIES:
-                    raise ParsingError(f"Exhausted retries: {error}") from error
+                    raise ParsingError(f"Exhausted retries: {error}") from parsing_error
                 self.logger.info("...retrying (attempt {})", try_ct)
                 return self.__get_fallback_continuation_info(config, continuation, is_live, try_ct + 1)
             else:
                 raise NoContinuation
+        return info
 
     def __extract_video_details(self, info):
         """Extract video details (including title and whether upcoming) from ytInitialPlayerResponse JSON."""
@@ -1021,6 +1017,7 @@ class ChatReplayDownloader:
         try:
             abort_cond_checker = None
             continuation_title = None
+            cookie_refresh = False
             attempt_ct = 0
             while True:
                 attempt_ct += 1
@@ -1035,27 +1032,38 @@ class ChatReplayDownloader:
                     continuation_title = chat_live_field
 
                 if continuation_title is None:
-                    playability_reason = config['playability_reason'] or 'Video does not have a chat replay.'
-                    if (config['is_upcoming'] or config['is_live']) and self.__is_ever_playable(config['playability_status']):
-                        if abort_cond_groups:
-                            if abort_cond_checker is None:
-                                def nochat_abort_cond_state_updater(state):
-                                    state.info['playability_status'] = config['playability_status']
-                                    scheduled_start_time = config['scheduled_start_time']
-                                    if state.get('orig_scheduled_start_time') is None:
-                                        state.debug['orig_scheduled_start_time'] = scheduled_start_time
-                                    state.info['scheduled_start_time'] = scheduled_start_time
-                                abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups,
-                                    nochat_abort_cond_state_updater, state=abort_cond_state)
-                            abort_cond_checker.check()
+                    playability_status = config['playability_status']
+                    playability_reason = config['playability_reason']
+                    if not (config['is_upcoming'] or config['is_live']):
+                        raise NoChatReplay(f"{playability_status}: {playability_reason} (neither upcoming nor live)")
+                    # Retry once after refetching cookies if status in UNPLAYABLE
+                    if playability_status == 'UNPLAYABLE' and not cookie_refresh:
+                        self.logger.info("{}: {} - retrying once after reloading cookies",
+                            playability_status, playability_reason)
+                        self.session.cookies = self.cookiejarprovider.load()
+                        cookie_refresh = True
+                        continue
+                    if not self.__is_ever_playable(playability_status):
+                        raise NoChatReplay(f"{playability_status}: {playability_reason}")
 
-                        retry_wait_secs = random.randint(60, 180) # jitter
-                        if self.logger.isEnabledFor(logging.INFO):
-                            self.logger.info("{} Retrying in {} secs (attempt {})",
-                                playability_reason, retry_wait_secs, attempt_ct)
-                        time.sleep(retry_wait_secs)
-                    else:
-                        raise NoChatReplay(playability_reason)
+                    if abort_cond_groups:
+                        if abort_cond_checker is None:
+                            def nochat_abort_cond_state_updater(state):
+                                state.info['playability_status'] = config['playability_status']
+                                scheduled_start_time = config['scheduled_start_time']
+                                if state.get('orig_scheduled_start_time') is None:
+                                    state.debug['orig_scheduled_start_time'] = scheduled_start_time
+                                state.info['scheduled_start_time'] = scheduled_start_time
+                            abort_cond_checker = self.AbortConditionChecker(self.logger, abort_cond_groups,
+                                nochat_abort_cond_state_updater, state=abort_cond_state)
+                        abort_cond_checker.check()
+
+                    retry_wait_secs = random.randint(60, 180) # jitter
+                    if self.logger.isEnabledFor(logging.INFO):
+                        self.logger.info("{}: {} - retrying in {} secs (attempt {})",
+                            playability_status, playability_reason, retry_wait_secs, attempt_ct)
+                    time.sleep(retry_wait_secs)
+                    cookie_refresh = False
                 else:
                     break
 
@@ -1374,7 +1382,10 @@ def main(args):
                              'Note: logging, which also includes chat messages, may still output to stdout and/or file depending on --log_file)')
 
     parser.add_argument('--cookies', '-c', default=None,
-                        help='name of cookies file to load from\n(default: no cookies loaded)')
+                        help='name of cookies file to load from\n(default: no cookies loaded)\n(ignored if --cookies_browser is specified)')
+
+    parser.add_argument('--cookies_browser', default=None,
+                        help='yt-dlp cookies-from-browser specification for accessing members-only streams (requires yt-dlp package to be installed)')
 
     parser.add_argument('--save_cookies', default=None,
                         help='name of cookies file to save to, which can be the same value as --cookies\n(default: no cookies saved)')
@@ -1587,7 +1598,7 @@ def main(args):
                 register_handler(abort_signal, finalize_output)
 
     try:
-        chat_downloader = ChatReplayDownloader(cookies=args.cookies or None)
+        chat_downloader = ChatReplayDownloader(args)
 
         def print_item(item):
             chat_downloader.print_item(item)
