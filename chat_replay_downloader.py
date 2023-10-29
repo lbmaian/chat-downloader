@@ -173,16 +173,12 @@ class ChatReplayDownloader:
         'message': 'message',
         'timestampText': 'time_text',
         'purchaseAmountText': 'amount', # in liveChatPaidMessageRenderer, liveChatPaidStickerRenderer
-        'headerBackgroundColor': 'header_color', # in liveChatPaidMessageRenderer
-        'bodyBackgroundColor': 'body_color', # in liveChatPaidMessageRenderer
         'amount': 'amount', # in addLiveChatTickerItemAction
-        'startBackgroundColor': 'body_color', # in addLiveChatTickerItemAction
         'durationSec': 'ticker_duration', # in liveChatTickerSponsorItemRenderer
         'detailText': 'message', # in liveChatTickerSponsorItemRenderer
         'headerPrimaryText': 'header_primary_text', # in liveChatMembershipItemRenderer
         'headerSubtext': 'header_subtext', # in liveChatMembershipItemRenderer
         'sticker': 'sticker', # in liveChatPaidStickerRenderer
-        'backgroundColor': 'body_color', # in liveChatPaidStickerRenderer
         'primaryText': 'message', # in liveChatSponsorshipsGiftPurchaseAnnouncementRenderer
     }
 
@@ -286,30 +282,6 @@ class ChatReplayDownloader:
         if date_str is None:
             return None
         return datetime.fromisoformat(date_str)
-
-    @staticmethod
-    def __arbg_int_to_rgba(argb_int):
-        """Convert ARGB integer to RGBA array."""
-        red = (argb_int >> 16) & 255
-        green = (argb_int >> 8) & 255
-        blue = argb_int & 255
-        alpha = (argb_int >> 24) & 255
-        return [red, green, blue, alpha]
-
-    @staticmethod
-    def __rgba_to_hex(colours):
-        """Convert RGBA array to hex colour."""
-        return '#{:02x}{:02x}{:02x}{:02x}'.format(*colours)
-
-    @classmethod
-    def __get_colours(cls, argb_int):
-        """Given an ARGB integer, return both RGBA and hex values."""
-        rgba_colour = cls.__arbg_int_to_rgba(argb_int)
-        hex_colour = cls.__rgba_to_hex(rgba_colour)
-        return {
-            'rgba': rgba_colour,
-            'hex': hex_colour
-        }
 
     def message_to_string(self, item):
         """
@@ -812,10 +784,6 @@ class ChatReplayDownloader:
         if('time_text' in data):
             data['time_in_seconds'] = int(
                 self.__time_to_seconds(data['time_text']))
-
-        for colour_key in ('header_color', 'body_color'):
-            if(colour_key in data):
-                data[colour_key] = self.__get_colours(data[colour_key])
 
         return data
 
