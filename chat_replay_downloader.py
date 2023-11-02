@@ -513,11 +513,17 @@ class ChatReplayDownloader:
                 self.logger.info("...retrying once after reloading cookies")
                 self.session.cookies = self.cookiejarprovider.load()
                 return self.__get_fallback_continuation_info(config, continuation, is_live, try_ct, cookie_refresh=True)
-            elif parsing_error and self.__is_ever_playable(playability_status):
+            elif self.__is_ever_playable(playability_status):
                 if try_ct >= self.__MAX_PARSING_ERROR_RETRIES:
-                    raise ParsingError(f"Exhausted retries: {error}") from parsing_error
+                    if parsing_error:
+                        raise ParsingError(f"Exhausted retries: {parsing_error}") from parsing_error
+                    else:
+                        raise NoContinuation
                 self.logger.info("...retrying (attempt {})", try_ct)
-                return self.__get_fallback_continuation_info(config, continuation, is_live, try_ct + 1)
+                # Only retry once if no parsing error
+                # This is a workaround attempt for OK status and no info yet stream hasn't actually ended yet
+                next_try_ct = try_ct + 1 if parsing_error else self.__MAX_PARSING_ERROR_RETRIES
+                return self.__get_fallback_continuation_info(config, continuation, is_live, next_try_ct)
             else:
                 raise NoContinuation
         return info
@@ -683,9 +689,9 @@ class ChatReplayDownloader:
             # Error code 403 'The caller does not have permission' error likely means the stream was privated immediately while the chat is still active.
             error_code = error.get('code')
             if error_code == 403:
-                raise VideoUnavailable # TODO: error.get('message')
+                raise VideoUnavailable(error.get('message', ''))
             elif error_code == 404:
-                raise VideoNotFound # TODO: error.get('message')
+                raise VideoNotFound(error.get('message', ''))
             # TODO: elif error_code // 100 == 5: # retry on server error
             else:
                 raise ParsingError("JSON response to {!r} is error:\n{}".format(url, _debug_dump(data)))
@@ -1084,14 +1090,14 @@ class ChatReplayDownloader:
                         if info is None:
                             use_non_api_fallback = True
                             continue
-                except NoContinuation:
-                    print('No continuation found, stream may have ended.')
+                except NoContinuation as e:
+                    print(str(e) or 'No continuation found, stream may have ended.')
                     break
-                except VideoUnavailable: # TODO: use error message
-                    print('Video not unavailable, stream may have been privated while live chat was still active.')
+                except VideoUnavailable as e:
+                    print(str(e) or 'Video not unavailable, stream may have been privated while live chat was still active.')
                     break
-                except VideoNotFound: # TODO: use error message
-                    print('Video not found, stream may have been deleted while live chat was still active.')
+                except VideoNotFound as e:
+                    print(str(e) or 'Video not found, stream may have been deleted while live chat was still active.')
                     break
 
                 if('actions' in info):
