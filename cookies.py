@@ -35,10 +35,12 @@ class CookieJarProvider():
                 # copied from yt_dlp/cookies.py load_cookies
                 self.browser_spec = yt_dlp.cookies._parse_browser_specification(browser_name, profile, keyring, container)
                 logger.info(f"yt-dlp cookie browser specification: {self.browser_spec!r}")
+                self.file = None
                 return
         except Exception as e:
             raise CookieError from e
 
+        self.browser_spec = None
         self.file = cookie_file
         if cookie_file and not os.path.exists(cookie_file):
             raise CookieError(f"The file {cookie_file!r} could not be found.")
